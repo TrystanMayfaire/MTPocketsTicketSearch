@@ -1,0 +1,15 @@
+name: Keep Streamlit Awake
+
+on:
+  schedule:
+    # Runs every 10 hours (0 minute, every 10th hour)
+    - cron: '0 */10 * * *'
+  workflow_dispatch: # Allows you to run it manually for testing
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          curl -I https://mtpocketsticketsearch.streamlit.app/
