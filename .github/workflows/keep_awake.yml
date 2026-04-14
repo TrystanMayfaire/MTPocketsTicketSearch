@@ -2,14 +2,39 @@ name: Keep Streamlit Awake
 
 on:
   schedule:
-    # Runs every 10 hours (0 minute, every 10th hour)
-    - cron: '0 */10 * * *'
-  workflow_dispatch: # Allows you to run it manually for testing
+    - cron: '0 */10 * * *' # Every 10 hours
+  workflow_dispatch:
 
 jobs:
-  ping:
+  wake-up:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Streamlit App
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Playwright
         run: |
-          curl -I https://mtpocketsticketsearch.streamlit.app/
+          pip install playwright
+          playwright install chromium
+
+      - name: Visit App with Browser
+        run: |
+          python -c "
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page()
+              # Replace with your actual URL
+              page.goto('https://mtpocketsticketsearch.streamlit.app/')
+              # Wait for it to load or find the wake-up button
+              page.wait_for_timeout(10000) 
+              if page.query_selector('button:has-text(\"Wake up\")'):
+                  page.click('button:has-text(\"Wake up\")')
+                  page.wait_for_timeout(20000)
+              browser.close()
+          "
