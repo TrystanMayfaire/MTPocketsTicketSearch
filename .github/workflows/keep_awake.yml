@@ -2,20 +2,24 @@ name: Keep Streamlit Awake
 
 on:
   schedule:
-    - cron: '0 */10 * * *' # Every 10 hours
+    - cron: '0 */10 * * *'
   workflow_dispatch:
 
 jobs:
   wake-up:
     runs-on: ubuntu-latest
+    # This environment variable opts into the newer Node.js version as requested by the warning
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 # Updated from v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6 # Updated from v4
         with:
-          python-version: '3.11'
+          python-version: '3.12' # Using 3.12 is safer for 2026 standards
 
       - name: Install Playwright
         run: |
@@ -29,12 +33,13 @@ jobs:
           with sync_playwright() as p:
               browser = p.chromium.launch()
               page = browser.new_page()
-              # Replace with your actual URL
               page.goto('https://mtpocketsticketsearch.streamlit.app/')
-              # Wait for it to load or find the wake-up button
               page.wait_for_timeout(10000) 
               if page.query_selector('button:has-text(\"Wake up\")'):
+                  print('Found Wake up button, clicking...')
                   page.click('button:has-text(\"Wake up\")')
                   page.wait_for_timeout(20000)
+              else:
+                  print('App is already awake!')
               browser.close()
           "
