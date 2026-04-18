@@ -27,6 +27,11 @@ def get_access_token():
     response.raise_for_status()
     return response.json()['access_token']
 
+@st.cache_data(ttl=0)
+def get_existing_checkins(_conn):
+    return _conn.read(worksheet="CheckIns")
+
+@st.cache_data(ttl=600) # Cache for 10 minutes (600 seconds)
 def search_transactions(prefix, start_date_str):
     token = get_access_token()
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'}
@@ -166,7 +171,7 @@ if st.button("Search Tickets"):
                 
                 # --- GOOGLE SHEETS MERGE ---
                 try:
-                    existing_checkins = conn.read(worksheet="CheckIns", ttl=0)
+                    existing_checkins = get_existing_checkins(conn)
                     manifest['Checked In'] = manifest['Purchaser Name'].isin(existing_checkins['Name'].tolist())
                 except:
                     manifest['Checked In'] = False
@@ -199,6 +204,25 @@ if st.button("Search Tickets"):
                 edited_df = st.data_editor(manifest, column_config=config, hide_index=True, key="manifest_editor")
 
                 if st.button("Save Changes to Google Sheet"):
-                    checkin_list = edited_df[(edited_df['Checked In'] == True) & (edited_df['Purchaser Name'] != "TOTAL TICKETS SOLD")][['Purchaser Name']]
-                    checkin_list.columns = ['Name']
-                    check
+                    with st.spinner("Updating check-in records..."):
+                        # Filter only those who are checked in, excluding the Totals row
+                        checkin_list = edited_df[
+                            (edited_df['Checked In'] == True) & 
+                            (edited_df['Purchaser Name'] != "TOTAL TICKETS SOLD")
+                        ][['Purchaser Name']]
+                        
+                        # Format for the Google Sheet
+                        checkin_list.columns = ['Name']
+                        checkin_list['Status'] = 'Checked In'
+                        
+                        # Update Google Sheets
+                        conn.update(worksheet="CheckIns", data=checkin_list)
+                        
+                        # IMPORTANT: Clear the cache so the app pulls the FRESH 
+                        # list from the Google Sheet on the next run
+                        st.cache_data.clear() 
+                        
+                        st.success("Check-ins synced successfully!")
+                        
+                        # Rerun the app to refresh the UI with the saved data
+                        st.rerun()
