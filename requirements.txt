@@ -1,1 +1,4 @@
 st-gsheets-connection
+csv
+streamlit
+pandas
