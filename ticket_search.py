@@ -202,6 +202,7 @@ if st.button("Search Tickets"):
             else:
                 st.success(f"Public access: Found {len(results)} transactions. Sorted by last name.")
                 st.markdown(f'### {show_title}')
+                st.info("Check patrons in by clicking the box next to their name.")
 
                 # Create pivot table
                 manifest = df.pivot_table(
@@ -225,6 +226,9 @@ if st.button("Search Tickets"):
                 totals_df = pd.DataFrame([totals_data])
                 manifest = pd.concat([manifest, totals_df], ignore_index=True)
 
+                if 'Checked In' not in manifest.columns:
+                    manifest.insert(0, 'Checked In', False)
+                
                 # Fill empty spots with "-" for readability
                 manifest = manifest.fillna(0)
 
@@ -253,12 +257,25 @@ if st.button("Search Tickets"):
 
                 styled_manifest = manifest.style.apply(bold_totals, axis=1)
 
-                st.dataframe(styled_manifest,
-                             width='content',
-                             hide_index=True,
-                             column_config=config)
+                edited_df = st.data_editor(
+                    manifest,
+                    hide_index=True,
+                    column_config={
+                        "Checked In": st.column_config.CheckboxColumn(
+                            "Arrived?",
+                            help="Check this box when the patron arrives",
+                            default=False,
+                        ),
+                        "Purchaser Name": st.column_config.Column(width=250, disabled=True),
+                        # ... your other date column configs ...
+                    },
+                    disabled=[col for col in manifest.columns if col != "Checked In"], # Only allow checkbox edits
+                    use_container_width=False,
+                )
                 st.warning("Password required to view financial data or download. "
                            "Please see admin for password if needed.")
-
         else:
             st.warning("No transactions found.")
+if st.button("Save Check-ins"):
+    # This is where we would push 'edited_df' back to a database
+    st.success("Check-ins saved for this session!")
