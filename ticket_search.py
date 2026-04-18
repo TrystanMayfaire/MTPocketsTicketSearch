@@ -5,6 +5,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 import streamlit as st
 import pandas as pd
+from streamlit_gsheets import GSheetsConnection
 
 CLIENT_ID = st.secrets['CLIENT_ID']
 CLIENT_SECRET = st.secrets['CLIENT_SECRET']
@@ -118,6 +119,9 @@ def search_transactions(prefix, start_date_str):
         current_start = current_end + timedelta(seconds=1)
 
     return all_rows
+# Connect to Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
+existing_data = conn.read(worksheet="CheckIns")
 
 st.set_page_config(page_title="MT Pockets Theatre", layout="wide")
 st.title("MT Pockets Ticket Search")
@@ -200,10 +204,9 @@ if st.button("Search Tickets"):
                 st.download_button("Download CSV", csv, f"{show_title}_ticket_report.csv", "text/csv")
 
             else:
-                st.success(f"Public access: Found {len(results)} transactions. Sorted by last name.")
+                st.success(f"Public access: Found {len(results)} items.")
                 st.markdown(f'### {show_title}')
-                st.info("Check patrons in by clicking the box next to their name.")
-
+            
                 # Create pivot table
                 manifest = df.pivot_table(
                     index=['Last Name', 'name'],
@@ -211,71 +214,95 @@ if st.button("Search Tickets"):
                     values='quantity',
                     aggfunc='sum'
                 ).reset_index()
-
-                # Sort by last name and clean up
-                manifest = manifest.sort_values(by='Last Name').drop(columns=['Last Name'])
+            
+                # Sort and clean up
+                manifest = manifest.sort_values(by='Last Name')
                 manifest = manifest.rename(columns={'name': 'Purchaser Name'})
-
-                # Keep list of date columns
+                manifest = manifest.drop(columns=['Last Name'])
+                
+                # Identify our date columns for later use
                 date_columns = [col for col in manifest.columns if col != 'Purchaser Name']
-
-                # Calculate ticket totals
-                totals_data = {"Purchaser Name": "TOTAL TICKETS SOLD"}
+            
+                # --- 3. INTEGRATE CHECK-IN DATA ---
+                try:
+                    # Read the current check-ins from Google Sheets
+                    existing_checkins = conn.read(worksheet="CheckIns", ttl=0) # ttl=0 ensures fresh data
+                    # Create a 'Checked In' column: True if the name is in our Google Sheet 'Name' column
+                    manifest['Checked In'] = manifest['Purchaser Name'].isin(existing_checkins['Name'].tolist())
+                except:
+                    # Fallback if the sheet is empty or not yet formatted
+                    manifest['Checked In'] = False
+            
+                # Move 'Checked In' to the first column position
+                cols = ['Checked In'] + [c for c in manifest.columns if c != 'Checked In']
+                manifest = manifest[cols]
+            
+                # --- 4. CALCULATE TOTALS ---
+                # We do this BEFORE converting numbers to strings ("-")
+                manifest_numeric = manifest.fillna(0)
+                totals_data = {"Purchaser Name": "TOTAL TICKETS SOLD", "Checked In": False}
                 for col in date_columns:
-                    totals_data[col] = manifest[col].sum()
+                    totals_data[col] = manifest_numeric[col].sum()
+                
                 totals_df = pd.DataFrame([totals_data])
                 manifest = pd.concat([manifest, totals_df], ignore_index=True)
-
-                if 'Checked In' not in manifest.columns:
-                    manifest.insert(0, 'Checked In', False)
-                
-                # Fill empty spots with "-" for readability
+            
+                # --- 5. FORMATTING (0 -> "-") ---
                 manifest = manifest.fillna(0)
-
-                # Convert values to integers and then replace 0 with '-'
                 for col in date_columns:
-                    manifest[col] = manifest[col].astype(int).astype(str).replace('0', '-')
-
-                # Configure column width
-                config = {
-                    'Purchaser Name': st.column_config.Column(
-                        'Purchaser Name'
+                    # Convert to int, then string, then replace 0 with dash
+                    manifest[col] = manifest[col].astype(float).astype(int).astype(str).replace('0', '-')
+            
+                # --- 6. DEFINE THE DATA EDITOR ---
+                st.info("Check boxes to mark arrivals. Click 'Save Changes' at the bottom to sync.")
+            
+                # Configure the columns
+                column_configuration = {
+                    "Checked In": st.column_config.CheckboxColumn(
+                        "Arrived",
+                        help="Check this when the patron arrives at the theatre",
+                        width="small",
+                    ),
+                    "Purchaser Name": st.column_config.Column(
+                        "Purchaser Name",
+                        width=250,
+                        disabled=True # Prevent staff from editing names
                     )
                 }
-
-                # Add date columns to config
+            
+                # Add date columns to config with centering
                 for col in date_columns:
-                    config[col] = st.column_config.Column(
+                    column_configuration[col] = st.column_config.Column(
                         col,
-                        required=True,
+                        width=120,
                         alignment="center",
-                        help=f"Tickets for {col}"
+                        disabled=True # Prevent staff from editing ticket counts
                     )
-
-                def bold_totals(row):
-                    return['font-weight: bold' if row['Purchaser Name'] == "TOTAL TICKETS SOLD" else '' for _ in row]
-
-                styled_manifest = manifest.style.apply(bold_totals, axis=1)
-
+            
+                # The Interactive Table
                 edited_df = st.data_editor(
                     manifest,
-                    hide_index=True,
-                    column_config={
-                        "Checked In": st.column_config.CheckboxColumn(
-                            "Arrived?",
-                            help="Check this box when the patron arrives",
-                            default=False,
-                        ),
-                        "Purchaser Name": st.column_config.Column(width=250, disabled=True),
-                        # ... your other date column configs ...
-                    },
-                    disabled=[col for col in manifest.columns if col != "Checked In"], # Only allow checkbox edits
+                    column_config=column_configuration,
                     use_container_width=False,
+                    hide_index=True,
+                    key="manifest_editor"
                 )
-                st.warning("Password required to view financial data or download. "
-                           "Please see admin for password if needed.")
-        else:
-            st.warning("No transactions found.")
-if st.button("Save Check-ins"):
-    # This is where we would push 'edited_df' back to a database
-    st.success("Check-ins saved for this session!")
+            
+                # --- 7. SAVE TO GOOGLE SHEETS ---
+                if st.button("Save Changes to Google Sheet"):
+                    # Filter only those who are checked in, excluding the Totals row
+                    checkin_list = edited_df[
+                        (edited_df['Checked In'] == True) & 
+                        (edited_df['Purchaser Name'] != "TOTAL TICKETS SOLD")
+                    ][['Purchaser Name']]
+                    
+                    # Format for the Google Sheet
+                    checkin_list.columns = ['Name']
+                    checkin_list['Status'] = 'Checked In'
+                    
+                    # Update Google Sheets
+                    conn.update(worksheet="CheckIns", data=checkin_list)
+                    st.success("Check-ins synced successfully!")
+                    st.rerun()
+            
+                st.warning("Password required to view financial data or download.")
