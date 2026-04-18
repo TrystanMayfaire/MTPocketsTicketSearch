@@ -122,11 +122,15 @@ st.sidebar.header("Access Control")
 password_input = st.sidebar.text_input("Admin Password (Optional)", type="password")
 is_admin = (password_input == ADMIN_PASSWORD)
 
+if "results" not in st.session_state:
+    st.session_state.results = None
+
 if st.button("Search Tickets"):
     with st.spinner("Syncing PayPal and Check-in data..."):
-        results = search_transactions(prefix, start_date.strftime('%Y-%m-%d'))
+        st.session_state.results = search_transactions(prefix, start_date.strftime('%Y-%m-%d'))
 
-        if results:
+        if st.session_state.results:
+            results = st.session_state.results
             df = pd.DataFrame(results)
             first_item_name = df['item_name'].iloc[0]
             show_title = first_item_name.replace(" Tickets", "").upper()
@@ -169,7 +173,6 @@ if st.button("Search Tickets"):
                 manifest = manifest.sort_values(by='Last Name').rename(columns={'name': 'Purchaser Name'}).drop(columns=['Last Name'])
                 date_columns = [col for col in manifest.columns if col != 'Purchaser Name']
                 
-                # --- GOOGLE SHEETS MERGE ---
                 try:
                     existing_checkins = get_existing_checkins(conn)
                     manifest['Checked In'] = manifest['Purchaser Name'].isin(existing_checkins['Name'].tolist())
@@ -204,23 +207,17 @@ if st.button("Search Tickets"):
                 edited_df = st.data_editor(manifest, column_config=config, hide_index=True, key="manifest_editor")
 
                 if st.button("Save Changes to Google Sheet"):
-                    with st.spinner("Updating check-in records..."):
-                        # Filter only those who are checked in, excluding the Totals row
-                        checkin_list = edited_df[
-                            (edited_df['Checked In'] == True) & 
-                            (edited_df['Purchaser Name'] != "TOTAL TICKETS SOLD")
-                        ][['Purchaser Name']]
-                        
-                        # Format for the Google Sheet
+                    with st.spinner("Updating records..."):
+                        checkin_list = edited_df[(edited_df['Checked In'] == True) & (edited_df['Purchaser Name'] != "TOTAL TICKETS SOLD")][['Purchaser Name']]
                         checkin_list.columns = ['Name']
                         checkin_list['Status'] = 'Checked In'
                         
-                        # Update Google Sheets
                         conn.update(worksheet="CheckIns", data=checkin_list)
                         
-                        # IMPORTANT: Clear the cache so the app pulls the FRESH 
-                        # list from the Google Sheet on the next run
+                        # Clear cache so next rerun pulls fresh Google Sheet data
                         st.cache_data.clear() 
+                        st.success("Check-ins synced successfully!")
+                        st.rerun()
                         
                         st.success("Check-ins synced successfully!")
                         
