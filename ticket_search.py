@@ -218,8 +218,8 @@ if st.session_state.results:
                 st.cache_data.clear() 
                 st.success("Check-ins synced successfully!")
                 st.rerun()
-                        
-                        st.success("Check-ins synced successfully!")
-                        
-                        # Rerun the app to refresh the UI with the saved data
-                        st.rerun()
+                
+                st.success("Check-ins synced successfully!")
+                
+                # Rerun the app to refresh the UI with the saved data
+                st.rerun()
