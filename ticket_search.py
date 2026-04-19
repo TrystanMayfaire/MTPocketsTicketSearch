@@ -164,7 +164,10 @@ if st.session_state.results:
 
         raw_dates = df['Show Date'].unique()
         sorted_dates = sorted(raw_dates, key=lambda x: pd.to_datetime(x, errors='coerce'))
-        filter_date = st.selectbox("Filter by Show Date (Select 'All' to see full manifest)", ["All"] + unique_dates)
+        filter_date = st.selectbox(
+            "Filter by Show Date", 
+            ["All"] + [str(d) for d in sorted_dates]
+        )
 
         display_df = df.copy()
         if filter_date != "All":
