@@ -201,7 +201,7 @@ if st.session_state.results:
             return [''] * len(row)
         
         # --- FORMATTING ---
-        for col in date_columns:
+        for col in date_cols:
             manifest[col] = manifest[col].astype(float).astype(int).astype(str).replace('0', '-')
         
         # --- DISPLAY & SAVE ---
