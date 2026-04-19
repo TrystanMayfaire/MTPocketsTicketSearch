@@ -198,7 +198,7 @@ if st.session_state.results:
                 return ['background-color: #d4edda'] * len(row) # Light green
             elif row['Purchaser Name'] == "TOTAL TICKETS SOLD":
                 return ['background-color: #f8f9fa; font-weight: bold'] * len(row) # Light grey
-            return [''] * len(row
+            return [''] * len(row)
         
         # --- FORMATTING ---
         for col in date_columns:
