@@ -126,6 +126,7 @@ if "results" not in st.session_state:
     st.session_state.results = None
 
 if st.button("Search Tickets"):
+    st.cache_data.clear()
     with st.spinner("Syncing PayPal and Check-in data..."):
         st.session_state.results = search_transactions(prefix, start_date.strftime('%Y-%m-%d'))
 
@@ -158,20 +159,23 @@ if st.session_state.results:
 
     df = df.drop(columns=['temp_date'])
 
-    if is_admin:
-        st.success(f"Admin access for {show_title}.")
-        admin_display = df.drop(columns=['raw_checkout_val', 'Last Name', 'Show Date', 'item_name']).copy()
-        for col in ['gross', 'fee', 'net']:
-            admin_display[col] = admin_display[col].map('${:,.2f}'.format)
-        st.dataframe(admin_display, hide_index=True)
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download CSV", csv, f"{show_title}_report.csv")
-
-    else:
+    if not is_admin:
         st.markdown(f'### {show_title}')
-        manifest = df.pivot_table(index=['Last Name', 'name'], columns='Show Date', values='quantity', aggfunc='sum').reset_index()
+
+        unique_dates = sorted(df['Show Date'].unique())
+        filter_date = st.selectbox("Filter by Show Date (Select 'All' to see full manifest)", ["All"] + unique_dates)
+
+        display_df = df.copy()
+        if filter_date != "All":
+            display_df = display_df[display_df['Show Date'] == filter_date]
+        
+        manifest = display_df.pivot_table(index=['Last Name', 'name'], columns='Show Date', values='quantity', aggfunc='sum').reset_index()
         manifest = manifest.sort_values(by='Last Name').rename(columns={'name': 'Purchaser Name'}).drop(columns=['Last Name'])
-        date_columns = [col for col in manifest.columns if col != 'Purchaser Name']
+        date_cols = [c for c in manifest.columns if c != 'Purchaser Name']
+        
+        # Try to sort dates naturally (e.g., Apr 18 before Apr 19)
+        date_cols.sort(key=lambda x: pd.to_datetime(x, errors='coerce'))
+        manifest = manifest[['Purchaser Name'] + date_cols]
         
         try:
             existing_checkins = get_existing_checkins(conn)
@@ -179,21 +183,27 @@ if st.session_state.results:
         except:
             manifest['Checked In'] = False
 
-        cols = ['Checked In'] + [c for c in manifest.columns if c != 'Checked In']
-        manifest = manifest[cols]
-
+        manifest = manifest[['Checked In'] + [c for c in manifest.columns if c != 'Checked In']]
+        
         # --- TOTALS ---
         manifest_numeric = manifest.fillna(0)
-        totals_data = {"Purchaser Name": "TOTAL TICKETS SOLD", "Checked In": False}
-        for col in date_columns:
-            totals_data[col] = manifest_numeric[col].sum()
-        manifest = pd.concat([manifest, pd.DataFrame([totals_data])], ignore_index=True)
+        totals_row = {"Purchaser Name": "TOTAL TICKETS SOLD", "Checked In": False}
+        for col in date_cols:
+            totals_row[col] = manifest_numeric[col].sum()
+        manifest = pd.concat([manifest, pd.DataFrame([totals_row])], ignore_index=True)
 
+        # Row Highlighting
+        def highlight_checked_in(row):
+            if row['Checked In'] and row['Purchaser Name'] != "TOTAL TICKETS SOLD":
+                return ['background-color: #d4edda'] * len(row) # Light green
+            elif row['Purchaser Name'] == "TOTAL TICKETS SOLD":
+                return ['background-color: #f8f9fa; font-weight: bold'] * len(row) # Light grey
+            return [''] * len(row
+        
         # --- FORMATTING ---
-        manifest = manifest.fillna(0)
         for col in date_columns:
             manifest[col] = manifest[col].astype(float).astype(int).astype(str).replace('0', '-')
-
+        
         # --- DISPLAY & SAVE ---
         st.info("Check boxes to mark arrivals and click Save.")
         
@@ -201,11 +211,11 @@ if st.session_state.results:
             "Checked In": st.column_config.CheckboxColumn("Arrived", width="small"),
             "Purchaser Name": st.column_config.Column("Purchaser Name", width=250, disabled=True)
         }
-        for col in date_columns:
+        for col in date_cols:
             config[col] = st.column_config.Column(col, width=120, alignment="center", disabled=True)
-
+            
         edited_df = st.data_editor(manifest, column_config=config, hide_index=True, key="manifest_editor")
-
+        
         if st.button("Save Changes to Google Sheet"):
             with st.spinner("Updating records..."):
                 checkin_list = edited_df[(edited_df['Checked In'] == True) & (edited_df['Purchaser Name'] != "TOTAL TICKETS SOLD")][['Purchaser Name']]
@@ -223,3 +233,11 @@ if st.session_state.results:
                 
                 # Rerun the app to refresh the UI with the saved data
                 st.rerun()
+    else:
+        st.success(f"Admin access for {show_title}.")
+        admin_display = df.drop(columns=['raw_checkout_val', 'Last Name', 'Show Date', 'item_name']).copy()
+        for col in ['gross', 'fee', 'net']:
+            admin_display[col] = admin_display[col].map('${:,.2f}'.format)
+        st.dataframe(admin_display, hide_index=True)
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("Download CSV", csv, f"{show_title}_report.csv")
