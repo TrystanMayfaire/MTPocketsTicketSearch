@@ -191,7 +191,11 @@ if st.session_state.results:
         for col in date_cols:
             totals_row[col] = manifest_numeric[col].sum()
         manifest = pd.concat([manifest, pd.DataFrame([totals_row])], ignore_index=True)
-
+        manifest['Purchaser Name'] = manifest.apply(
+            lambda row: f"✅ {row['Purchaser Name']}" if row['Checked In'] == True and row['Purchaser Name'] != "TOTAL TICKETS SOLD" else row['Purchaser Name'], 
+            axis=1
+        )
+        
         # Row Highlighting
         def highlight_checked_in(row):
             if row['Checked In'] and row['Purchaser Name'] != "TOTAL TICKETS SOLD":
