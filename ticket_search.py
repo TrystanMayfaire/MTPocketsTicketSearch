@@ -162,7 +162,8 @@ if st.session_state.results:
     if not is_admin:
         st.markdown(f'### {show_title}')
 
-        unique_dates = sorted(df['Show Date'].unique())
+        raw_dates = df['Show Date'].unique()
+        sorted_dates = sorted(raw_dates, key=lambda x: pd.to_datetime(x, errors='coerce'))
         filter_date = st.selectbox("Filter by Show Date (Select 'All' to see full manifest)", ["All"] + unique_dates)
 
         display_df = df.copy()
