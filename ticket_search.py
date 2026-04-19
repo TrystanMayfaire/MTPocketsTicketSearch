@@ -202,7 +202,14 @@ if st.session_state.results:
         
         # --- FORMATTING ---
         for col in date_cols:
-            manifest[col] = manifest[col].astype(float).astype(int).astype(str).replace('0', '-')
+            manifest[col] = (
+                manifest[col]
+                .fillna(0)
+                .astype(float)
+                .astype(int)
+                .astype(str)
+                .replace('0', '-')
+            )
         
         # --- DISPLAY & SAVE ---
         st.info("Check boxes to mark arrivals and click Save.")
