@@ -113,7 +113,7 @@ def search_transactions(prefix, start_date_str):
 # --- MAIN UI ---
 st.title("MT Pockets Ticket Search")
 
-prefix = st.sidebar.text_input("Ticket Prefix", "CP")
+prefix = st.sidebar.text_input("Ticket Prefix", "LEAR")
 start_date = st.sidebar.date_input("Start Date", datetime(2026,1,1))
 sort_col = st.sidebar.selectbox("Sort By",["Date", "Name", "Ticket ID"])
 sort_order = st.sidebar.radio("Order", ["Ascending", "Descending"])
