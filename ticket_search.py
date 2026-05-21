@@ -89,7 +89,6 @@ def search_paypal_historical_records(prefix, start_date_val):
 
         for tx in tx_details:
             info = tx.get('transaction_info', {})
-            print(info)
             payer = tx.get('payer_info', {})
             item = info.get('item_details', [{}])[0]
 
@@ -163,15 +162,16 @@ else:
 
 # Filter data to only show rows matching the target prefix chosen in the sidebar
 if not df_combined.empty and ticket_prefix:
-    prefix_lower = ticket_prefix.lower()
-
-    # Force all columns to strings safely to prevent tracking errors on missing data
-    df_combined = df_combined[
-        df_combined['item_name'].astype(str).str.lower().str.contains(prefix_lower) |
-        df_combined['show_date'].astype(str).str.lower().str.contains(prefix_lower) |
-        df_combined['id'].astype(str).str.lower().str.contains(prefix_lower) |
-        df_combined['name'].astype(str).str.lower().str.contains(prefix_lower)
-    ]
+    pass
+    # prefix_lower = ticket_prefix.lower()
+    #
+    # # Force all columns to strings safely to prevent tracking errors on missing data
+    # df_combined = df_combined[
+    #     df_combined['item_name'].astype(str).str.lower().str.contains(prefix_lower) |
+    #     df_combined['show_date'].astype(str).str.lower().str.contains(prefix_lower) |
+    #     df_combined['id'].astype(str).str.lower().str.contains(prefix_lower) |
+    #     df_combined['name'].astype(str).str.lower().str.contains(prefix_lower)
+    # ]
 
 # Rest of your original quantity explosion, data editor, and check-in save mechanics remain identical
 if not is_admin:
