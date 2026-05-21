@@ -54,30 +54,10 @@ def get_access_token():
     url = f"{base_url}/v1/oauth2/token"
     headers = {"Accept": "application/json", "Accept-Language": "en_US"}
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=15)
-
-        # DIAGNOSTIC ALERT 1: Show the raw HTTP status code from PayPal
-        st.sidebar.write(f"PayPal API Status: {response.status_code}")
-
-        if response.status_code != 200:
-            st.sidebar.error(f"PayPal API Error Body: {response.text}")
-            return pd.DataFrame()
-
-        res_json = response.json()
-        tx_details = res_json.get('transaction_details', [])
-
-        # DIAGNOSTIC ALERT 2: Show how many total records PayPal returned
-        st.sidebar.write(f"Raw PayPal TX Count: {len(tx_details)}")
-
-        historical_rows = []
-        return pd.DataFrame(historical_rows)
-
-        # response = requests.post(url, auth=(CLIENT_ID, CLIENT_SECRET), data={"grant_type": "client_credentials"}, headers=headers, timeout=10)
-        # return response.json().get('access_token')
-    except Exception as e:
-        # DIAGNOSTIC ALERT 3: Catch and print any code crashes
-        st.sidebar.error(f"Historical Loop Exception: {str(e)}")
-        return pd.DataFrame()
+        response = requests.post(url, auth=(CLIENT_ID, CLIENT_SECRET), data={"grant_type": "client_credentials"}, headers=headers, timeout=10)
+        return response.json().get('access_token')
+    except:
+        return None
 
 @st.cache_data(ttl=300) # Keep historical requests cached for speed
 def search_paypal_historical_records(prefix, start_date_val):
@@ -101,10 +81,18 @@ def search_paypal_historical_records(prefix, start_date_val):
 
     try:
         response = requests.get(url, headers=headers, params=params, timeout=15)
+
+        # DIAGNOSTIC ALERT 1: Show the raw HTTP status code from PayPal
+        st.sidebar.write(f"PayPal API Status: {response.status_code}")
+
         if response.status_code != 200:
             return pd.DataFrame()
 
         tx_details = response.json().get('transaction_details', [])
+
+        # DIAGNOSTIC ALERT 2: Show how many total records PayPal returned
+        st.sidebar.write(f"Raw PayPal TX Count: {len(tx_details)}")
+
         historical_rows = []
 
         for tx in tx_details:
@@ -140,6 +128,8 @@ def search_paypal_historical_records(prefix, start_date_val):
                 })
         return pd.DataFrame(historical_rows)
     except:
+        # DIAGNOSTIC ALERT 3: Catch and print any code crashes
+        st.sidebar.error(f"Historical Loop Exception: {str(e)}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=0)
