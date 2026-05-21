@@ -35,12 +35,10 @@ def get_spreadsheet_transactions(_conn):
         
         standardized_rows = []
         for _, row in df.iterrows():
-            # EXACT MATCH FOR YOUR SPREADSHEET COLUMNS:
-            # name, transaction_id, date, time, quantity, amount, item_name, show_date
-            show_date_raw = str(row.get('show_date', row.get('raw_checkout_val', ''))).strip()
+            show_date_raw = str(row.get('show_date', '')).strip()
             item_name_val = str(row.get('item_name', 'Tickets')).strip()
-            tx_id = str(row.get('transaction_id', row.get('item id', 'N/A'))).strip()
-            gross_val = str(row.get('amount', row.get('gross', '0.00'))).strip()
+            tx_id = str(row.get('transaction_id', 'N/A')).strip()
+            gross_val = str(row.get('amount', '0.00')).strip()
             
             raw_sheet_date = str(row.get('date', ''))
             try:
@@ -59,7 +57,7 @@ def get_spreadsheet_transactions(_conn):
                 'fee': '0.00',
                 'net': gross_val,
                 'item_name': item_name_val,
-                'raw_checkout_val': show_date_raw, # Plugs directly into your date parser
+                'raw_checkout_val': show_date_raw, 
                 'quantity': int(row.get('quantity', 1)) if pd.notna(row.get('quantity')) else 1,
             })
         return pd.DataFrame(standardized_rows)
@@ -157,8 +155,8 @@ def get_existing_checkins(_conn):
 st.sidebar.header("Show Configuration")
 ticket_prefix = st.sidebar.text_input("Ticket Prefix (e.g., LEAR)", "LEAR").strip()
 
-# REQUIREMENT 3: Date control defaults to the first of this current month
-first_of_month = datetime.today().replace(day=1)
+# Adjust control window to default to the 1st of the current month
+first_of_month = datetime.today().replace(day=1).date()
 start_date = st.sidebar.date_input("Start Date", first_of_month)
 
 sort_col = st.sidebar.selectbox("Sort By", ["Name", "Date", "Ticket ID"])
@@ -172,10 +170,10 @@ if st.button("Refresh Manifest"):
     st.cache_data.clear()
     st.success("Manifest completely updated!")
 
-# Pull spreadsheet rows
+# Pull spreadsheet records (Fixed call mapping argument bug)
 df_spreadsheet = get_spreadsheet_transactions(conn)
 
-# REQUIREMENT 3 (CONT.): Static boundary evaluation checks history safely against live true today
+# Evaluate search scope rules statically against real-time parameters
 today_date = datetime.today().date()
 is_past_run = start_date < today_date
 
@@ -191,7 +189,7 @@ if is_past_run:
 else:
     df_combined = df_spreadsheet
 
-# Enhanced global prefix verification filter
+# Global containment prefix safety scanner
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
     df_combined = df_combined[
@@ -269,19 +267,20 @@ if not df_combined.empty:
                 
         grouped_df['Custom Label'] = grouped_df.apply(format_conditional_labels, axis=1)
         
-        # --- REQUIREMENT 2: STABLE CONSECUTIVE NIGHT SORTING ---
-        # We enforce sorting on chronological Show Date value first within the index list 
-        # so Night 1, Night 2, etc. group sequentially and don't scatter alphabetically.
+        # Add an internal helper column to parse chronological order accurately
+        grouped_df['Parsed Performance Date'] = pd.to_datetime(grouped_df['Show Date'], errors='coerce')
+        
+        # Pivot table tracking structure
         manifest = grouped_df.pivot_table(
-            index=['Last Name', 'name', 'Custom Label', 'Show Date'], 
+            index=['Last Name', 'name', 'Custom Label', 'Parsed Performance Date', 'Show Date'], 
             columns='Show Date', 
             values='quantity', 
             aggfunc='sum'
         ).reset_index()
         
-        # Sorting priority guarantees consecutive tracking per person across multi-night events
-        manifest = manifest.sort_values(by=['Last Name', 'name', 'Show Date'])
-        manifest = manifest.rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'name', 'Show Date'])
+        # FIXES CONSECUTIVE SORT: Force alphabetical by surname, then by exact performance order
+        manifest = manifest.sort_values(by=['Last Name', 'name', 'Parsed Performance Date'])
+        manifest = manifest.rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'name', 'Parsed Performance Date', 'Show Date'])
         
         date_cols = [c for c in manifest.columns if c != 'Purchaser Name']
         date_cols.sort(key=lambda x: pd.to_datetime(x, errors='coerce'))
