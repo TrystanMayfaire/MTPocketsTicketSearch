@@ -35,11 +35,13 @@ def get_spreadsheet_transactions(_conn):
         
         standardized_rows = []
         for _, row in df.iterrows():
-            # Align directly with the column headers shown in your spreadsheet screenshot
-            checkout_val = row.get('show_date', '')
-            item_name_val = str(row.get('item_name', '')).strip()
+            # EXACT MATCH FOR YOUR SPREADSHEET COLUMNS:
+            # name, transaction_id, date, time, quantity, amount, item_name, show_date
+            show_date_raw = str(row.get('show_date', row.get('raw_checkout_val', ''))).strip()
+            item_name_val = str(row.get('item_name', 'Tickets')).strip()
+            tx_id = str(row.get('transaction_id', row.get('item id', 'N/A'))).strip()
+            gross_val = str(row.get('amount', row.get('gross', '0.00'))).strip()
             
-            # Safe Date Sanitizer to parse manual string entries like "May 21 2026" cleanly
             raw_sheet_date = str(row.get('date', ''))
             try:
                 parsed_dt = pd.to_datetime(raw_sheet_date)
@@ -48,20 +50,21 @@ def get_spreadsheet_transactions(_conn):
                 formatted_date = datetime.today().strftime('%m-%d-%Y')
 
             standardized_rows.append({
-                'item id': str(row.get('transaction_id', 'N/A')),
+                'item id': tx_id,
                 'date': formatted_date,
                 'time': str(row.get('time', '00:00:00')),
                 'name': str(row.get('name', '')).strip(),
-                'email address': str(row.get('email', '')),
-                'gross': str(row.get('amount', '0.00')),
+                'email address': str(row.get('email', 'N/A')),
+                'gross': gross_val,
                 'fee': '0.00',
-                'net': str(row.get('amount', '0.00')),
+                'net': gross_val,
                 'item_name': item_name_val,
-                'raw_checkout_val': str(checkout_val),
+                'raw_checkout_val': show_date_raw, # Plugs directly into your date parser
                 'quantity': int(row.get('quantity', 1)) if pd.notna(row.get('quantity')) else 1,
             })
         return pd.DataFrame(standardized_rows)
-    except:
+    except Exception as e:
+        st.error(f"Spreadsheet error: {e}")
         return pd.DataFrame()
 
 # --- HISTORICAL SEARCH ENGINE ---
@@ -153,7 +156,10 @@ def get_existing_checkins(_conn):
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Show Configuration")
 ticket_prefix = st.sidebar.text_input("Ticket Prefix (e.g., LEAR)", "LEAR").strip()
-start_date = st.sidebar.date_input("Start Date", datetime.today())
+
+# REQUIREMENT 3: Date control defaults to the first of this current month
+first_of_month = datetime.today().replace(day=1)
+start_date = st.sidebar.date_input("Start Date", first_of_month)
 
 sort_col = st.sidebar.selectbox("Sort By", ["Name", "Date", "Ticket ID"])
 sort_order = st.sidebar.radio("Order", ["Ascending", "Descending"])
@@ -169,7 +175,7 @@ if st.button("Refresh Manifest"):
 # Pull spreadsheet rows
 df_spreadsheet = get_spreadsheet_transactions(conn)
 
-# --- SMART HYBRID SWITCH ---
+# REQUIREMENT 3 (CONT.): Static boundary evaluation checks history safely against live true today
 today_date = datetime.today().date()
 is_past_run = start_date < today_date
 
@@ -185,7 +191,7 @@ if is_past_run:
 else:
     df_combined = df_spreadsheet
 
-# Enhanced global filter to catch combinations of codes like "LEAR1" or raw names
+# Enhanced global prefix verification filter
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
     df_combined = df_combined[
@@ -198,7 +204,6 @@ if not df_combined.empty and ticket_prefix:
 if not df_combined.empty:
     df = df_combined.copy()
     
-    # Safe fallback title matching strategy
     first_item_name = df['item_name'].iloc[0]
     if "Tickets" in str(first_item_name):
         show_title = str(first_item_name).replace(" Tickets", "").upper()
@@ -207,7 +212,6 @@ if not df_combined.empty:
 
     def extract_manifest_details(row):
         raw_show_date = str(row['raw_checkout_val'])
-        # Strip timestamp details gracefully out of descriptions like "Friday, May 29, 7:30 PM" -> "Friday, May 29"
         show_date = raw_show_date[:raw_show_date.rfind(",")] if "," in raw_show_date else raw_show_date
         full_name = str(row['name']).strip()
         last_name = full_name.split()[-1] if " " in full_name else full_name
@@ -243,10 +247,9 @@ if not df_combined.empty:
         if filter_date != "All":
             display_df = display_df[display_df['Show Date'] == filter_date]
         
-        # Initial compilation group
         grouped_df = display_df.groupby(['Last Name', 'name', 'Show Date'], as_index=False)['quantity'].sum()
         
-        # --- CONDITIONAL MULTI-NIGHT CONDITIONAL HIGH LIGHTER ---
+        # --- CONDITIONAL MULTI-NIGHT LABEL GENERATOR ---
         full_date_map = df.groupby('name')['Show Date'].unique().to_dict()
 
         def format_conditional_labels(row):
@@ -258,27 +261,29 @@ if not df_combined.empty:
             
             total_nights_attended = len(all_patron_nights)
             
-            # If they are only attending 1 single night, leave their name raw and untouched!
             if total_nights_attended <= 1:
                 return patron_name
             else:
-                # If they are a multi-night attendee, calculate chronological step placement
                 night_index = all_patron_nights.index(current_date) + 1
                 return f"{patron_name} [Night {night_index}/{total_nights_attended}]"
                 
         grouped_df['Custom Label'] = grouped_df.apply(format_conditional_labels, axis=1)
         
-        # Force Show Date into the index parameters to protect vertical separation boundaries
+        # --- REQUIREMENT 2: STABLE CONSECUTIVE NIGHT SORTING ---
+        # We enforce sorting on chronological Show Date value first within the index list 
+        # so Night 1, Night 2, etc. group sequentially and don't scatter alphabetically.
         manifest = grouped_df.pivot_table(
-            index=['Last Name', 'Custom Label', 'Show Date'], 
+            index=['Last Name', 'name', 'Custom Label', 'Show Date'], 
             columns='Show Date', 
             values='quantity', 
             aggfunc='sum'
         ).reset_index()
         
-        manifest = manifest.sort_values(by=['Last Name', 'Show Date']).rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'Show Date'])
-        date_cols = [c for c in manifest.columns if c != 'Purchaser Name']
+        # Sorting priority guarantees consecutive tracking per person across multi-night events
+        manifest = manifest.sort_values(by=['Last Name', 'name', 'Show Date'])
+        manifest = manifest.rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'name', 'Show Date'])
         
+        date_cols = [c for c in manifest.columns if c != 'Purchaser Name']
         date_cols.sort(key=lambda x: pd.to_datetime(x, errors='coerce'))
         manifest = manifest[['Purchaser Name'] + date_cols]
         
