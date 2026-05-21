@@ -89,6 +89,7 @@ def search_paypal_historical_records(prefix, start_date_val):
 
         for tx in tx_details:
             info = tx.get('transaction_info', {})
+            print(info)
             payer = tx.get('payer_info', {})
             item = info.get('item_details', [{}])[0]
 
