@@ -26,15 +26,16 @@ def get_access_token():
         return None
 
 # --- RECENT/LIVE TRANSACTION DATAFRAME (From Spreadsheet) ---
-@st.cache_data(ttl=10)
+# Temporarily dropping cache to allow immediate debugging feedback loop
 def get_spreadsheet_transactions(_conn):
     try:
         df = _conn.read(worksheet="TransactionData")
         if df is None or df.empty:
+            st.sidebar.error("Spreadsheet read returned an empty frame.")
             return pd.DataFrame()
         
         standardized_rows = []
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             show_date_raw = str(row.get('show_date', '')).strip()
             item_name_val = str(row.get('item_name', 'Tickets')).strip()
             tx_id = str(row.get('transaction_id', 'N/A')).strip()
@@ -61,7 +62,8 @@ def get_spreadsheet_transactions(_conn):
                 'quantity': int(row.get('quantity', 1)) if pd.notna(row.get('quantity')) else 1,
             })
         return pd.DataFrame(standardized_rows)
-    except:
+    except Exception as e:
+        st.sidebar.error(f"Internal read crash: {str(e)}")
         return pd.DataFrame()
 
 # --- HISTORICAL SEARCH ENGINE ---
@@ -163,13 +165,18 @@ st.sidebar.header("Access Control")
 password_input = st.sidebar.text_input("Admin Password (Optional)", type="password")
 is_admin = (password_input == ADMIN_PASSWORD)
 
+# NEW DEBUG TOGGLE
+st.sidebar.markdown("---")
+enable_debug = st.sidebar.checkbox("Enable Developer Diagnostics", value=False)
+
 if st.sidebar.button("Refresh Manifest"):
     st.cache_data.clear()
     st.rerun()
 
-# Pull spreadsheet records
+# 1. Fetch data from spreadsheet
 df_spreadsheet = get_spreadsheet_transactions(conn)
 
+# 2. Fetch data from historical PayPal
 today_date = datetime.today().date()
 is_past_run = start_date < today_date
 
@@ -183,9 +190,13 @@ if is_past_run:
     else:
         df_combined = df_spreadsheet
 else:
+    df_historical = pd.DataFrame()
     df_combined = df_spreadsheet
 
-# Global filter rule 
+# Capture a snapshot of combined data before global filters are applied
+df_pre_filter = df_combined.copy() if not df_combined.empty else pd.DataFrame()
+
+# 3. Apply global prefix validation filters
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
     df_combined = df_combined[
@@ -193,6 +204,37 @@ if not df_combined.empty and ticket_prefix:
         df_combined['raw_checkout_val'].astype(str).str.lower().str.contains(prefix_lower) |
         df_combined['item id'].astype(str).str.lower().str.contains(prefix_lower)
     ]
+
+# --- RENDER DEBUG PANELS IF CHECKED ---
+if enable_debug:
+    st.title("🛠️ Manifest Diagnostic Console")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("1. Raw Spreadsheet Load")
+        st.caption(f"Rows detected: {len(df_spreadsheet)}")
+        st.dataframe(df_spreadsheet)
+        
+    with col2:
+        st.subheader("2. Raw PayPal API Load")
+        st.caption(f"Rows detected: {len(df_historical)}")
+        st.dataframe(df_historical)
+        
+    st.markdown("---")
+    col3, col4 = st.columns(2)
+    with col3:
+        st.subheader("3. Pre-Filtered Consolidated Frame")
+        st.caption("This is what the app looks like right before applying the prefix filter.")
+        st.dataframe(df_pre_filter)
+        
+    with col4:
+        st.subheader("4. Post-Filtered Consolidated Frame")
+        st.caption(f"Matches keeping prefix '{ticket_prefix}': {len(df_combined)}")
+        st.dataframe(df_combined)
+        
+    st.info("Uncheck 'Enable Developer Diagnostics' in the sidebar to return to the normal manifest scanner screen.")
+    st.stop()
+
 
 # --- TRANSFORMATION & MATRIX GENERATION ENGINE ---
 if not df_combined.empty:
@@ -207,7 +249,6 @@ if not df_combined.empty:
     def extract_manifest_details(row):
         raw_show_date = str(row['raw_checkout_val']).strip()
         
-        # Robust Date Cleanser: Normalizes "Friday, May 29, 7:30 PM" and "Friday, May 29" to the same key
         parts = [p.strip() for p in raw_show_date.split(',')]
         if len(parts) >= 2:
             show_date = f"{parts[0]}, {parts[1]}"
@@ -250,7 +291,6 @@ if not df_combined.empty:
         
         grouped_df = display_df.groupby(['Last Name', 'name', 'Show Date'], as_index=False)['quantity'].sum()
         
-        # --- CONDITIONAL MULTI-NIGHT LABEL GENERATOR ---
         full_date_map = df.groupby('name')['Show Date'].unique().to_dict()
 
         def format_conditional_labels(row):
@@ -278,7 +318,6 @@ if not df_combined.empty:
             aggfunc='sum'
         ).reset_index()
         
-        # Chronological multi-night sorting logic
         manifest = manifest.sort_values(by=['Last Name', 'name', 'Parsed Performance Date'])
         manifest = manifest.rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'name', 'Parsed Performance Date', 'Show Date'])
         
