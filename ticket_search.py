@@ -62,7 +62,6 @@ def get_spreadsheet_transactions(_conn):
             })
         return pd.DataFrame(standardized_rows)
     except:
-        # Silently fail inside cache function to avoid breaking Streamlit context
         return pd.DataFrame()
 
 # --- HISTORICAL SEARCH ENGINE ---
@@ -168,7 +167,7 @@ if st.sidebar.button("Refresh Manifest"):
     st.cache_data.clear()
     st.rerun()
 
-# Safe data fetch
+# Pull spreadsheet records
 df_spreadsheet = get_spreadsheet_transactions(conn)
 
 today_date = datetime.today().date()
@@ -206,8 +205,15 @@ if not df_combined.empty:
         show_title = str(ticket_prefix).upper()
 
     def extract_manifest_details(row):
-        raw_show_date = str(row['raw_checkout_val'])
-        show_date = raw_show_date[:raw_show_date.rfind(",")] if "," in raw_show_date else raw_show_date
+        raw_show_date = str(row['raw_checkout_val']).strip()
+        
+        # Robust Date Cleanser: Normalizes "Friday, May 29, 7:30 PM" and "Friday, May 29" to the same key
+        parts = [p.strip() for p in raw_show_date.split(',')]
+        if len(parts) >= 2:
+            show_date = f"{parts[0]}, {parts[1]}"
+        else:
+            show_date = raw_show_date
+            
         full_name = str(row['name']).strip()
         last_name = full_name.split()[-1] if " " in full_name else full_name
         return pd.Series([show_date, last_name])
