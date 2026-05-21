@@ -335,7 +335,7 @@ if not df_combined.empty:
                 st.rerun()
 else:
     st.warning(f"No transactions found matching the prefix '{ticket_prefix}' in this timeline window.")
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 # --- HISTORICAL SEARCH ENGINE ---
 @st.cache_data(ttl=600)
