@@ -1,27 +1,31 @@
-import requests
-import csv
-import argparse
-import sys
-import requests
-from datetime import datetime, timedelta, timezone
 import streamlit as st
 import pandas as pd
 import requests
+from datetime import datetime, timedelta, timezone
 from streamlit_gsheets import GSheetsConnection
 
-# 1. MUST BE FIRST STREAMLIT COMMAND
+# 1. INITIAL SETUP & PREFERENCES
 st.set_page_config(page_title="MT Pockets Theatre", layout="wide")
 
-# 2. LOAD SECRETS
 CLIENT_ID = st.secrets['PAYPAL_CLIENT_ID']
 CLIENT_SECRET = st.secrets['PAYPAL_CLIENT_SECRET']
 ADMIN_PASSWORD = st.secrets.get('ADMIN_PASSWORD', 'mtpockets123')
 PAYPAL_MODE = st.secrets.get('PAYPAL_MODE', 'live')
 
-# 3. INITIALIZE CONNECTION (Global)
+# Initialize the Google Sheets connection
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- RECENT/LIVE TRANSACTION DATAFRAME (From Pipedream Spreadsheet backend) ---
+def get_access_token():
+    base_url = "https://api-m.paypal.com" if PAYPAL_MODE == "live" else "https://api-m.sandbox.paypal.com"
+    url = f"{base_url}/v1/oauth2/token"
+    headers = {"Accept": "application/json", "Accept-Language": "en_US"}
+    try:
+        response = requests.post(url, auth=(CLIENT_ID, CLIENT_SECRET), data={"grant_type": "client_credentials"}, headers=headers, timeout=10)
+        return response.json().get('access_token')
+    except:
+        return None
+
+# --- RECENT/LIVE TRANSACTION DATAFRAME (From Spreadsheet) ---
 @st.cache_data(ttl=10)
 def get_spreadsheet_transactions(_conn):
     try:
@@ -29,7 +33,6 @@ def get_spreadsheet_transactions(_conn):
         if df.empty:
             return pd.DataFrame()
 
-        # Standardize spreadsheet column mappings to match your original PayPal dict keys
         standardized_rows = []
         for _, row in df.iterrows():
             standardized_rows.append({
@@ -45,104 +48,99 @@ def get_spreadsheet_transactions(_conn):
                 'ada': str(row.get('ada_seating', 'No'))
             })
         return pd.DataFrame(standardized_rows)
-    except Exception as e:
+    except:
         return pd.DataFrame()
 
-# --- HISTORICAL PAYPAL API ENGINE (Your original reporting search loop) ---
-def get_access_token():
-    base_url = "https://api-m.paypal.com" if PAYPAL_MODE == "live" else "https://api-m.sandbox.paypal.com"
-    url = f"{base_url}/v1/oauth2/token"
-    headers = {"Accept": "application/json", "Accept-Language": "en_US"}
-    try:
-        response = requests.post(url, auth=(CLIENT_ID, CLIENT_SECRET), data={"grant_type": "client_credentials"}, headers=headers, timeout=10)
-        return response.json().get('access_token')
-    except:
-        return None
-
-@st.cache_data(ttl=300) # Keep historical requests cached for speed
-def search_paypal_historical_records(prefix, start_date_val):
+# --- YOUR ORIGINAL HISTORICAL SEARCH ENGINE (Restored) ---
+@st.cache_data(ttl=600)
+def search_transactions_historical(prefix, start_date_str):
     token = get_access_token()
     if not token:
-        return pd.DataFrame()
+        return []
 
+    headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'}
     base_url = "https://api-m.paypal.com" if PAYPAL_MODE == "live" else "https://api-m.sandbox.paypal.com"
-    url = f"{base_url}/v1/reporting/transactions"
-
-    # Format the start date from your sidebar widget into PayPal's required timestamp string
-    start_timestamp = f"{start_date_val.strftime('%Y-%m-%d')}T00:00:00Z"
-
-    params = {
-        "start_date": start_timestamp,
-        "end_date": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "fields": "all",
-        "page_size": 100
-    }
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=15)
+        current_start = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        st.error(f"Error: Date format must be YYYY-MM-DD (Received: {start_date_str})")
+        return []
 
-        # DIAGNOSTIC ALERT 1: Show the raw HTTP status code from PayPal
-        st.sidebar.write(f"PayPal API Status: {response.status_code}")
+    ultimate_end = datetime.now(timezone.utc)
+    all_rows = []
 
-        if response.status_code != 200:
-            return pd.DataFrame()
+    while current_start < ultimate_end:
+        current_end = current_start + timedelta(days=30)
+        if current_end > ultimate_end:
+            current_end = ultimate_end
 
-        tx_details = response.json().get('transaction_details', [])
+        params = {
+            'start_date': current_start.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'end_date': current_end.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'fields': 'all',
+            'page_size': 100
+        }
 
-        # DIAGNOSTIC ALERT 2: Show how many total records PayPal returned
-        st.sidebar.write(f"Raw PayPal TX Count: {len(tx_details)}")
+        response = requests.get(f"{base_url}/v1/reporting/transactions", headers=headers, params=params)
 
-        historical_rows = []
+        if response.status_code == 200:
+            tx_data = response.json().get('transaction_details', [])
+            for tx in tx_data:
+                t_info = tx.get('transaction_info', {})
+                p_info = tx.get('payer_info', {})
+                items = tx.get('cart_info', {}).get('item_details', [])
 
-        for tx in tx_details:
-            info = tx.get('transaction_info', {})
-            payer = tx.get('payer_info', {})
-            item = info.get('item_details', [{}])[0]
+                raw_time = t_info.get('transaction_initiation_date')
+                if raw_time:
+                    dt_obj = datetime.fromisoformat(raw_time.replace('Z', '+00:00'))
+                    f_date = dt_obj.strftime('%m-%d-%Y')
+                    f_time = dt_obj.strftime('%H:%M:%S')
+                else:
+                    f_date, f_time = "N/A", "N/A"
 
-            # Reconstruct original option and item prefix parsing logic
-            item_name = item.get('item_name', 'Tickets')
-            options = item.get('item_options', [])
-            show_date = "-"
-            ada = "No"
-            for opt in options:
-                opt_name = opt.get('name', '').lower()
-                if 'date' in opt_name or 'performance' in opt_name:
-                    show_date = opt.get('value', '-')
-                if 'ada' in opt_name or 'seating' in opt_name:
-                    ada = opt.get('value', 'No')
+                first_item_in_tx = True
 
-            # Filter records using your original target criteria (Prefix text match)
-            if prefix.lower() in item_name.lower() or prefix.lower() in show_date.lower():
-                historical_rows.append({
-                    'id': info.get('transaction_id', ''),
-                    'date': info.get('transaction_initiation_date', '')[:10],
-                    'time': info.get('transaction_initiation_date', '')[11:19],
-                    'name': f"{payer.get('given_name', '')} {payer.get('surname', '')}".strip(),
-                    'email': payer.get('email_address', ''),
-                    'amount': info.get('transaction_amount', {}).get('value', '0.00'),
-                    'item_name': item_name,
-                    'show_date': show_date,
-                    'quantity': int(item.get('item_quantity', 1)),
-                    'ada': ada
-                })
-        return pd.DataFrame(historical_rows)
-    except:
-        # DIAGNOSTIC ALERT 3: Catch and print any code crashes
-        st.sidebar.error(f"Historical Loop Exception: {str(e)}")
-        return pd.DataFrame()
+                for item in items:
+                    i_code = item.get('item_code', '')
+                    i_name = item.get('item_name', '')
+
+                    # Match by prefix from your original logic
+                    if (i_code and i_code.startswith(prefix)) or (i_name and i_name.startswith(prefix)):
+                        row_gross = float(item.get('item_amount', {}).get('value', 0))
+
+                        # Handle the custom ticket show data option labels
+                        checkout_opts = item.get('checkout_options', [{}])
+                        show_date_val = checkout_opts[0].get('checkout_option_value', '-') if checkout_opts else "-"
+
+                        # Normalized keys to perfectly match the matrix layout down below
+                        all_rows.append({
+                            'id': t_info.get('transaction_id', 'N/A'),
+                            'date': f_date,
+                            'time': f_time,
+                            'name': p_info.get('payer_name', {}).get('alternate_full_name', 'N/A'),
+                            'email': p_info.get('email_address', 'N/A'),
+                            'amount': f"{row_gross:.2f}",
+                            'item_name': i_name or 'Tickets',
+                            'show_date': show_date_val,
+                            'quantity': int(item.get('item_quantity', '1')),
+                            'ada': 'No' # Default placeholder matching sheet
+                        })
+        current_start = current_end + timedelta(seconds=1)
+    return all_rows
 
 @st.cache_data(ttl=0)
 def get_existing_checkins(_conn):
     try: return _conn.read(worksheet="CheckIns")
     except: return pd.DataFrame(columns=['Name', 'Status'])
 
-# --- MAIN UI ---
+# --- SIDEBAR CONTROLS ---
 st.title("MT Pockets Ticket Search")
 
 st.sidebar.header("Show Configuration")
-ticket_prefix = st.sidebar.text_input("Ticket Prefix", "LEAR").strip()
+ticket_prefix = st.sidebar.text_input("Ticket Prefix (e.g., LEAR)", "LEAR").strip()
 start_date = st.sidebar.date_input("Start Date", datetime.today())
+
 sort_col = st.sidebar.selectbox("Sort By", ["Name", "Date"])
 sort_order = st.sidebar.radio("Order", ["Ascending", "Descending"])
 
@@ -152,43 +150,39 @@ is_admin = (password_input == ADMIN_PASSWORD)
 
 if st.button("Refresh Manifest"):
     st.cache_data.clear()
-    st.success("Manifest completely updated from data sources!")
+    st.success("Manifest completely updated!")
 
-# Fetch the modern local spreadsheet transactions
+# Pull data assets
 df_spreadsheet = get_spreadsheet_transactions(conn)
 df_checkins = get_existing_checkins(conn)
 
-# --- AUTOMATIC HYBRID SELECTION LOGIC ---
+# --- SMART HYBRID SWITCH ---
 today_date = datetime.today().date()
 is_past_run = start_date < today_date
 
 if is_past_run:
-    # Rule 1: Selected start date is in the past -> Pull PayPal Cloud Backup and append to Spreadsheet
-    df_historical_raw = search_paypal_historical_records(ticket_prefix, start_date)
-    df_combined = pd.concat([df_spreadsheet, df_historical_raw], ignore_index=True).drop_duplicates(subset=['id'])
+    # Trigger your exact original sequential loop
+    historical_list = search_transactions_historical(ticket_prefix, start_date.strftime("%Y-%m-%d"))
+    df_historical = pd.DataFrame(historical_list)
+    df_combined = pd.concat([df_spreadsheet, df_historical], ignore_index=True).drop_duplicates(subset=['id'])
 else:
-    # Rule 2: Show date is today or future -> Skip the laggy API entirely and trust the spreadsheet
+    # Future/Today show run: protect speeds and pull only from the live spreadsheet
     df_combined = df_spreadsheet
 
-# Filter data to only show rows matching the target prefix chosen in the sidebar
+# Global filter rule mapping
 if not df_combined.empty and ticket_prefix:
-    pass
-    # prefix_lower = ticket_prefix.lower()
-    #
-    # # Force all columns to strings safely to prevent tracking errors on missing data
-    # df_combined = df_combined[
-    #     df_combined['item_name'].astype(str).str.lower().str.contains(prefix_lower) |
-    #     df_combined['show_date'].astype(str).str.lower().str.contains(prefix_lower) |
-    #     df_combined['id'].astype(str).str.lower().str.contains(prefix_lower) |
-    #     df_combined['name'].astype(str).str.lower().str.contains(prefix_lower)
-    # ]
+    prefix_lower = ticket_prefix.lower()
+    df_combined = df_combined[
+        df_combined['item_name'].astype(str).str.lower().str.contains(prefix_lower) |
+        df_combined['show_date'].astype(str).str.lower().str.contains(prefix_lower) |
+        df_combined['id'].astype(str).str.lower().str.contains(prefix_lower)
+    ]
 
-# Rest of your original quantity explosion, data editor, and check-in save mechanics remain identical
+# --- MATRIX DATA DISPLAY ---
 if not is_admin:
     st.markdown('### WILL CALL MANIFEST')
 
     if not df_combined.empty:
-        # Collect dynamic dropdown options from the filtered subset
         sorted_date_options = sorted(list(df_combined['show_date'].dropna().unique()))
         filter_date = st.selectbox("Filter by Show Date", ["All"] + [str(d) for d in sorted_date_options])
 
