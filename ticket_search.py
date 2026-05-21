@@ -30,7 +30,7 @@ def get_access_token():
 def get_spreadsheet_transactions(_conn):
     try:
         df = _conn.read(worksheet="TransactionData")
-        if df.empty:
+        if df is None or df.empty:
             return pd.DataFrame()
         
         standardized_rows = []
@@ -61,8 +61,8 @@ def get_spreadsheet_transactions(_conn):
                 'quantity': int(row.get('quantity', 1)) if pd.notna(row.get('quantity')) else 1,
             })
         return pd.DataFrame(standardized_rows)
-    except Exception as e:
-        st.error(f"Spreadsheet error: {e}")
+    except:
+        # Silently fail inside cache function to avoid breaking Streamlit context
         return pd.DataFrame()
 
 # --- HISTORICAL SEARCH ENGINE ---
@@ -78,7 +78,6 @@ def search_transactions_historical(prefix, start_date_str):
     try:
         current_start = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError:
-        st.error(f"Error: Date format must be YYYY-MM-DD (Received: {start_date_str})")
         return []
 
     ultimate_end = datetime.now(timezone.utc)
@@ -155,7 +154,6 @@ def get_existing_checkins(_conn):
 st.sidebar.header("Show Configuration")
 ticket_prefix = st.sidebar.text_input("Ticket Prefix (e.g., LEAR)", "LEAR").strip()
 
-# Adjust control window to default to the 1st of the current month
 first_of_month = datetime.today().replace(day=1).date()
 start_date = st.sidebar.date_input("Start Date", first_of_month)
 
@@ -166,14 +164,13 @@ st.sidebar.header("Access Control")
 password_input = st.sidebar.text_input("Admin Password (Optional)", type="password")
 is_admin = (password_input == ADMIN_PASSWORD)
 
-if st.button("Refresh Manifest"):
+if st.sidebar.button("Refresh Manifest"):
     st.cache_data.clear()
-    st.success("Manifest completely updated!")
+    st.rerun()
 
-# Pull spreadsheet records (Fixed call mapping argument bug)
+# Safe data fetch
 df_spreadsheet = get_spreadsheet_transactions(conn)
 
-# Evaluate search scope rules statically against real-time parameters
 today_date = datetime.today().date()
 is_past_run = start_date < today_date
 
@@ -189,7 +186,7 @@ if is_past_run:
 else:
     df_combined = df_spreadsheet
 
-# Global containment prefix safety scanner
+# Global filter rule 
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
     df_combined = df_combined[
@@ -266,11 +263,8 @@ if not df_combined.empty:
                 return f"{patron_name} [Night {night_index}/{total_nights_attended}]"
                 
         grouped_df['Custom Label'] = grouped_df.apply(format_conditional_labels, axis=1)
-        
-        # Add an internal helper column to parse chronological order accurately
         grouped_df['Parsed Performance Date'] = pd.to_datetime(grouped_df['Show Date'], errors='coerce')
         
-        # Pivot table tracking structure
         manifest = grouped_df.pivot_table(
             index=['Last Name', 'name', 'Custom Label', 'Parsed Performance Date', 'Show Date'], 
             columns='Show Date', 
@@ -278,7 +272,7 @@ if not df_combined.empty:
             aggfunc='sum'
         ).reset_index()
         
-        # FIXES CONSECUTIVE SORT: Force alphabetical by surname, then by exact performance order
+        # Chronological multi-night sorting logic
         manifest = manifest.sort_values(by=['Last Name', 'name', 'Parsed Performance Date'])
         manifest = manifest.rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'name', 'Parsed Performance Date', 'Show Date'])
         
