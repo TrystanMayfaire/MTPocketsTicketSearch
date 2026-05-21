@@ -162,10 +162,14 @@ else:
 
 # Filter data to only show rows matching the target prefix chosen in the sidebar
 if not df_combined.empty and ticket_prefix:
-    # Match against either the parsed item name or the explicit show code string
+    prefix_lower = ticket_prefix.lower()
+
+    # Force all columns to strings safely to prevent tracking errors on missing data
     df_combined = df_combined[
-        df_combined['item_name'].str.lower().str.contains(ticket_prefix.lower()) |
-        df_combined['show_date'].str.lower().str.contains(ticket_prefix.lower())
+        df_combined['item_name'].astype(str).str.lower().str.contains(prefix_lower) |
+        df_combined['show_date'].astype(str).str.lower().str.contains(prefix_lower) |
+        df_combined['id'].astype(str).str.lower().str.contains(prefix_lower) |
+        df_combined['name'].astype(str).str.lower().str.contains(prefix_lower)
     ]
 
 # Rest of your original quantity explosion, data editor, and check-in save mechanics remain identical
