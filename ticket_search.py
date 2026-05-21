@@ -26,22 +26,25 @@ def get_access_token():
         return None
 
 # --- RECENT/LIVE TRANSACTION DATAFRAME (From Spreadsheet) ---
-# Temporarily dropping cache to allow immediate debugging feedback loop
 def get_spreadsheet_transactions(_conn):
     try:
-        df = _conn.read(worksheet="TransactionData")
+        # Bypassing raw read wrapper with explicit SQL execution targeting the worksheet tab
+        df = _conn.query('SELECT * FROM TransactionData')
+        
         if df is None or df.empty:
-            st.sidebar.error("Spreadsheet read returned an empty frame.")
             return pd.DataFrame()
         
         standardized_rows = []
-        for idx, row in df.iterrows():
-            show_date_raw = str(row.get('show_date', '')).strip()
-            item_name_val = str(row.get('item_name', 'Tickets')).strip()
-            tx_id = str(row.get('transaction_id', 'N/A')).strip()
-            gross_val = str(row.get('amount', '0.00')).strip()
+        for _, row in df.iterrows():
+            # Standardize column header reads to ignore unpredictable trailing spaces
+            row_dict = {str(k).strip().lower(): v for k, v in row.items()}
             
-            raw_sheet_date = str(row.get('date', ''))
+            show_date_raw = str(row_dict.get('show_date', row_dict.get('show date', ''))).strip()
+            item_name_val = str(row_dict.get('item_name', row_dict.get('item name', 'Tickets'))).strip()
+            tx_id = str(row_dict.get('transaction_id', row_dict.get('transaction id', 'N/A'))).strip()
+            gross_val = str(row_dict.get('amount', '0.00')).strip()
+            raw_sheet_date = str(row_dict.get('date', ''))
+            
             try:
                 parsed_dt = pd.to_datetime(raw_sheet_date)
                 formatted_date = parsed_dt.strftime('%m-%d-%Y')
@@ -51,19 +54,19 @@ def get_spreadsheet_transactions(_conn):
             standardized_rows.append({
                 'item id': tx_id,
                 'date': formatted_date,
-                'time': str(row.get('time', '00:00:00')),
-                'name': str(row.get('name', '')).strip(),
-                'email address': str(row.get('email', 'N/A')),
+                'time': str(row_dict.get('time', '00:00:00')),
+                'name': str(row_dict.get('name', '')).strip(),
+                'email address': str(row_dict.get('email', 'N/A')),
                 'gross': gross_val,
                 'fee': '0.00',
                 'net': gross_val,
                 'item_name': item_name_val,
                 'raw_checkout_val': show_date_raw, 
-                'quantity': int(row.get('quantity', 1)) if pd.notna(row.get('quantity')) else 1,
+                'quantity': int(row_dict.get('quantity', 1)) if pd.notna(row_dict.get('quantity')) else 1,
             })
         return pd.DataFrame(standardized_rows)
     except Exception as e:
-        st.sidebar.error(f"Internal read crash: {str(e)}")
+        st.sidebar.error(f"Spreadsheet read diagnostic error: {str(e)}")
         return pd.DataFrame()
 
 # --- HISTORICAL SEARCH ENGINE ---
@@ -148,8 +151,12 @@ def search_transactions_historical(prefix, start_date_str):
 
 @st.cache_data(ttl=0)
 def get_existing_checkins(_conn):
-    try: return _conn.read(worksheet="CheckIns")
-    except: return pd.DataFrame(columns=['Name', 'Status'])
+    try: 
+        # Also utilizing direct query extraction strategy for verification syncing 
+        df = _conn.query('SELECT * FROM CheckIns')
+        return df if df is not None else pd.DataFrame(columns=['Name', 'Status'])
+    except: 
+        return pd.DataFrame(columns=['Name', 'Status'])
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Show Configuration")
@@ -165,7 +172,6 @@ st.sidebar.header("Access Control")
 password_input = st.sidebar.text_input("Admin Password (Optional)", type="password")
 is_admin = (password_input == ADMIN_PASSWORD)
 
-# NEW DEBUG TOGGLE
 st.sidebar.markdown("---")
 enable_debug = st.sidebar.checkbox("Enable Developer Diagnostics", value=False)
 
@@ -173,10 +179,9 @@ if st.sidebar.button("Refresh Manifest"):
     st.cache_data.clear()
     st.rerun()
 
-# 1. Fetch data from spreadsheet
+# Execute data assembly
 df_spreadsheet = get_spreadsheet_transactions(conn)
 
-# 2. Fetch data from historical PayPal
 today_date = datetime.today().date()
 is_past_run = start_date < today_date
 
@@ -193,10 +198,8 @@ else:
     df_historical = pd.DataFrame()
     df_combined = df_spreadsheet
 
-# Capture a snapshot of combined data before global filters are applied
 df_pre_filter = df_combined.copy() if not df_combined.empty else pd.DataFrame()
 
-# 3. Apply global prefix validation filters
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
     df_combined = df_combined[
@@ -224,7 +227,6 @@ if enable_debug:
     col3, col4 = st.columns(2)
     with col3:
         st.subheader("3. Pre-Filtered Consolidated Frame")
-        st.caption("This is what the app looks like right before applying the prefix filter.")
         st.dataframe(df_pre_filter)
         
     with col4:
