@@ -35,13 +35,21 @@ def get_spreadsheet_transactions(_conn):
 
         standardized_rows = []
         for _, row in df.iterrows():
-            # Support either layout: explicit show_date or raw dropdown checkout text
             checkout_val = row.get('raw_checkout_val', row.get('show_date', ''))
+
+            # Smart Date Sanitizer: Converts manual sheet inputs gracefully to %m-%d-%Y
+            raw_sheet_date = str(row.get('date', ''))
+            try:
+                # Attempts to parse whatever format you typed manually (slashes, text, dashes)
+                parsed_dt = pd.to_datetime(raw_sheet_date)
+                formatted_date = parsed_dt.strftime('%m-%d-%Y')
+            except:
+                formatted_date = datetime.today().strftime('%m-%d-%Y')
 
             standardized_rows.append({
                 'item id': str(row.get('item_id', row.get('transaction_id', 'N/A'))),
-                'date': str(row.get('date', '')),
-                'time': str(row.get('time', '')),
+                'date': formatted_date,
+                'time': str(row.get('time', '00:00:00')),
                 'name': str(row.get('name', '')).strip(),
                 'email address': str(row.get('email', '')),
                 'gross': str(row.get('amount', '0.00')),
@@ -55,7 +63,7 @@ def get_spreadsheet_transactions(_conn):
     except:
         return pd.DataFrame()
 
-# --- YOUR ORIGINAL HISTORICAL SEARCH ENGINE (Restored & Aligned) ---
+# --- HISTORICAL SEARCH ENGINE ---
 @st.cache_data(ttl=600)
 def search_transactions_historical(prefix, start_date_str):
     token = get_access_token()
@@ -157,7 +165,7 @@ if st.button("Refresh Manifest"):
     st.cache_data.clear()
     st.success("Manifest completely updated!")
 
-# Pull sources
+# Pull data sources
 df_spreadsheet = get_spreadsheet_transactions(conn)
 
 # --- SMART HYBRID SWITCH ---
@@ -176,7 +184,7 @@ if is_past_run:
 else:
     df_combined = df_spreadsheet
 
-# Global data fallback shield for your manual updates
+# Global filter rule shield
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
     df_combined = df_combined[
@@ -186,11 +194,10 @@ if not df_combined.empty and ticket_prefix:
         (df_combined['item_name'] == '') | (df_combined['item_name'] == 'nan')
     ]
 
-# --- FLAWLESS DATA TRANSFORMATION MATRIX ENGINE (Your Original Logic Restored) ---
+# --- TRANSFORMATION & SEPARATION GRID ENGINE ---
 if not df_combined.empty:
     df = df_combined.copy()
 
-    # Extract Title Text dynamically from the first discovered row
     first_item_name = df['item_name'].iloc[0]
     show_title = str(first_item_name).replace(" Tickets", "").upper()
 
@@ -231,9 +238,26 @@ if not df_combined.empty:
         if filter_date != "All":
             display_df = display_df[display_df['Show Date'] == filter_date]
 
-        # This pivot perfectly merges multiple purchases per person per day into singular sums!
-        manifest = display_df.pivot_table(index=['Last Name', 'name'], columns='Show Date', values='quantity', aggfunc='sum').reset_index()
-        manifest = manifest.sort_values(by='Last Name').rename(columns={'name': 'Purchaser Name'}).drop(columns=['Last Name'])
+        # --- THE SEPARATION MECHANISM ---
+        # First group the rows to get clean sums per person per date
+        grouped_df = display_df.groupby(['Last Name', 'name', 'Show Date'], as_index=False)['quantity'].sum()
+
+        # Rewrite the displayed name string to include your custom ticket indicator brackets
+        # e.g., "Mary Spellman [Tickets: 2]"
+        def format_purchaser_label(row):
+            return f"{row['name']} [Tickets: {int(row['quantity'])}]"
+
+        grouped_df['Custom Label'] = grouped_df.apply(format_purchaser_label, axis=1)
+
+        # By including 'Show Date' inside our index list, Pandas forces Mary to break out onto completely separate rows!
+        manifest = grouped_df.pivot_table(
+            index=['Last Name', 'Custom Label', 'Show Date'],
+            columns='Show Date',
+            values='quantity',
+            aggfunc='sum'
+        ).reset_index()
+
+        manifest = manifest.sort_values(by=['Last Name', 'Show Date']).rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'Show Date'])
         date_cols = [c for c in manifest.columns if c != 'Purchaser Name']
 
         date_cols.sort(key=lambda x: pd.to_datetime(x, errors='coerce'))
@@ -259,7 +283,6 @@ if not df_combined.empty:
             axis=1
         )
 
-        # Formatting cells to look neat
         for col in date_cols:
             manifest[col] = (
                 manifest[col]
@@ -274,7 +297,7 @@ if not df_combined.empty:
 
         config = {
             "Checked In": st.column_config.CheckboxColumn("Arrived", width="small"),
-            "Purchaser Name": st.column_config.Column("Purchaser Name", width=250, disabled=True)
+            "Purchaser Name": st.column_config.Column("Purchaser Name", width=280, disabled=True)
         }
         for col in date_cols:
             config[col] = st.column_config.Column(col, width=120, alignment="center", disabled=True)
