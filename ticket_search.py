@@ -26,17 +26,15 @@ def get_access_token():
         return None
 
 # --- RECENT/LIVE TRANSACTION DATAFRAME (From Spreadsheet) ---
+@st.cache_data(ttl=10)
 def get_spreadsheet_transactions(_conn):
     try:
-        # Bypassing raw read wrapper with explicit SQL execution targeting the worksheet tab
         df = _conn.query('SELECT * FROM TransactionData')
-        
         if df is None or df.empty:
             return pd.DataFrame()
         
         standardized_rows = []
         for _, row in df.iterrows():
-            # Standardize column header reads to ignore unpredictable trailing spaces
             row_dict = {str(k).strip().lower(): v for k, v in row.items()}
             
             show_date_raw = str(row_dict.get('show_date', row_dict.get('show date', ''))).strip()
@@ -65,8 +63,7 @@ def get_spreadsheet_transactions(_conn):
                 'quantity': int(row_dict.get('quantity', 1)) if pd.notna(row_dict.get('quantity')) else 1,
             })
         return pd.DataFrame(standardized_rows)
-    except Exception as e:
-        st.sidebar.error(f"Spreadsheet read diagnostic error: {str(e)}")
+    except:
         return pd.DataFrame()
 
 # --- HISTORICAL SEARCH ENGINE ---
@@ -152,7 +149,6 @@ def search_transactions_historical(prefix, start_date_str):
 @st.cache_data(ttl=0)
 def get_existing_checkins(_conn):
     try: 
-        # Also utilizing direct query extraction strategy for verification syncing 
         df = _conn.query('SELECT * FROM CheckIns')
         return df if df is not None else pd.DataFrame(columns=['Name', 'Status'])
     except: 
@@ -172,14 +168,11 @@ st.sidebar.header("Access Control")
 password_input = st.sidebar.text_input("Admin Password (Optional)", type="password")
 is_admin = (password_input == ADMIN_PASSWORD)
 
-st.sidebar.markdown("---")
-enable_debug = st.sidebar.checkbox("Enable Developer Diagnostics", value=False)
-
 if st.sidebar.button("Refresh Manifest"):
     st.cache_data.clear()
     st.rerun()
 
-# Execute data assembly
+# Run Core Pipeline Engine
 df_spreadsheet = get_spreadsheet_transactions(conn)
 
 today_date = datetime.today().date()
@@ -195,10 +188,7 @@ if is_past_run:
     else:
         df_combined = df_spreadsheet
 else:
-    df_historical = pd.DataFrame()
     df_combined = df_spreadsheet
-
-df_pre_filter = df_combined.copy() if not df_combined.empty else pd.DataFrame()
 
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
@@ -207,36 +197,6 @@ if not df_combined.empty and ticket_prefix:
         df_combined['raw_checkout_val'].astype(str).str.lower().str.contains(prefix_lower) |
         df_combined['item id'].astype(str).str.lower().str.contains(prefix_lower)
     ]
-
-# --- RENDER DEBUG PANELS IF CHECKED ---
-if enable_debug:
-    st.title("🛠️ Manifest Diagnostic Console")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("1. Raw Spreadsheet Load")
-        st.caption(f"Rows detected: {len(df_spreadsheet)}")
-        st.dataframe(df_spreadsheet)
-        
-    with col2:
-        st.subheader("2. Raw PayPal API Load")
-        st.caption(f"Rows detected: {len(df_historical)}")
-        st.dataframe(df_historical)
-        
-    st.markdown("---")
-    col3, col4 = st.columns(2)
-    with col3:
-        st.subheader("3. Pre-Filtered Consolidated Frame")
-        st.dataframe(df_pre_filter)
-        
-    with col4:
-        st.subheader("4. Post-Filtered Consolidated Frame")
-        st.caption(f"Matches keeping prefix '{ticket_prefix}': {len(df_combined)}")
-        st.dataframe(df_combined)
-        
-    st.info("Uncheck 'Enable Developer Diagnostics' in the sidebar to return to the normal manifest scanner screen.")
-    st.stop()
-
 
 # --- TRANSFORMATION & MATRIX GENERATION ENGINE ---
 if not df_combined.empty:
