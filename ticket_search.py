@@ -199,6 +199,7 @@ if not df_combined.empty and ticket_prefix:
     ]
 
 # --- TRANSFORMATION & MATRIX GENERATION ENGINE ---
+# (Moved outside the conditional blocks so data is processed for both views)
 if not df_combined.empty:
     df = df_combined.copy()
     
@@ -210,7 +211,6 @@ if not df_combined.empty:
 
     def extract_manifest_details(row):
         raw_show_date = str(row['raw_checkout_val']).strip()
-        
         parts = [p.strip() for p in raw_show_date.split(',')]
         if len(parts) >= 2:
             show_date = f"{parts[0]}, {parts[1]}"
@@ -237,9 +237,25 @@ if not df_combined.empty:
 
     df = df.drop(columns=['temp_date'])
 
-    if not is_admin:
-        st.markdown(f'### {show_title}')
+    # Display Show Header
+    st.markdown(f'### {show_title} Dashboard')
 
+    # --- ROUTING VIEW: ADMIN vs FRONT OF HOUSE ---
+    if is_admin:
+        st.subheader("Financial Ledger (Admin Mode)")
+        
+        # Display actionable financial column tables
+        admin_display = df[['date', 'time', 'name', 'email address', 'item id', 'quantity', 'gross', 'fee', 'net']].copy()
+        
+        # Format currency representations smoothly
+        admin_display['gross'] = admin_display['gross'].map(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
+        admin_display['fee'] = admin_display['fee'].map(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
+        admin_display['net'] = admin_display['net'].map(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
+        
+        st.dataframe(admin_display, hide_index=True, use_container_width=True)
+        
+    else:
+        # Standard Door Check-In Interface
         raw_dates = df['Show Date'].unique()
         sorted_dates = sorted(raw_dates, key=lambda x: pd.to_datetime(x, errors='coerce'))
         filter_date = st.selectbox(
