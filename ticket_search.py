@@ -304,4 +304,32 @@ if not df_combined.empty:
             manifest[col] = (
                 manifest[col]
                 .fillna(0)
-                .astype(float
+                .astype(float)
+                .astype(int)
+                .astype(str)
+                .replace('0', '-')
+            )
+
+        st.info("Check boxes to mark arrivals and click Save.")
+
+        config = {
+            "Checked In": st.column_config.CheckboxColumn("Arrived", width="small"),
+            "Purchaser Name": st.column_config.Column("Purchaser Name", width=280, disabled=True)
+        }
+        for col in date_cols:
+            config[col] = st.column_config.Column(col, width=120, alignment="center", disabled=True)
+
+        edited_df = st.data_editor(manifest, column_config=config, hide_index=True, key="manifest_editor")
+
+        if st.button("Save Changes to Google Sheet"):
+            with st.spinner("Updating records..."):
+                checkin_list = edited_df[(edited_df['Checked In'] == True) & (edited_df['Purchaser Name'] != "TOTAL TICKETS SOLD")][['Purchaser Name']]
+                checkin_list.columns = ['Name']
+                checkin_list['Status'] = 'Checked In'
+
+                conn.update(worksheet="CheckIns", data=checkin_list)
+                st.cache_data.clear()
+                st.success("Check-ins synced successfully!")
+                st.rerun()
+else:
+    st.warning(f"No transactions found matching the prefix '{ticket_prefix}' in this timeline window.")
