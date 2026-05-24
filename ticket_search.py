@@ -93,7 +93,7 @@ def search_transactions_historical(prefix, start_date_str):
     except ValueError:
         return []
 
-    ultimate_end = datetime.strptime("2026-05-29 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    ultimate_end = datetime.strptime("2026-05-22 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     all_rows = []
 
     while current_start < ultimate_end:
@@ -201,15 +201,6 @@ if is_past_run:
         df_combined = df_spreadsheet
 else:
     df_combined = df_spreadsheet
-
-# --- TEMPORARY DIAGNOSTIC AUDIT ---
-st.sidebar.markdown("### Jarred Spellman Data Audit")
-if not df_combined.empty:
-    jarred_audit = df_combined[df_combined['name'].str.lower().str.contains('spellman')]
-    if not jarred_audit.empty:
-        st.sidebar.dataframe(jarred_audit[['date', 'item id', 'quantity', 'gross']], hide_index=True)
-    else:
-        st.sidebar.write("Jarred not found in active filtered data.")
 
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
