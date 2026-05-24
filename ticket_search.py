@@ -284,7 +284,10 @@ if not df_combined.empty:
         manifest = manifest.sort_values(by=['Last Name', 'Show Date']).rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'Show Date'])
         date_cols = [c for c in manifest.columns if c != 'Purchaser Name']
 
+        # --- CRITICAL LAYOUT SORT FIX ---
+        # Force the column headers to sort by actual calendar order instead of string characters
         date_cols.sort(key=lambda x: pd.to_datetime(x, errors='coerce'))
+
         manifest = manifest[['Purchaser Name'] + date_cols]
 
         try:
