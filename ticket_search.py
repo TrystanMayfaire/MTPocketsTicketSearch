@@ -93,7 +93,7 @@ def search_transactions_historical(prefix, start_date_str):
     except ValueError:
         return []
 
-    ultimate_end = datetime.now(timezone.utc)
+    ultimate_end = datetime.strptime("2026-05-29 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     all_rows = []
 
     while current_start < ultimate_end:
