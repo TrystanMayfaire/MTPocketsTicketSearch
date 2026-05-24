@@ -252,9 +252,16 @@ if not df_combined.empty:
 
         def format_purchaser_label(row):
             p_name = row['name']
-            all_my_dates = sorted(list(person_dates_map.get(p_name, [])))
+            raw_dates = person_dates_map.get(p_name, [])
 
-            # If the patron has tickets for multiple nights, calculate their timeline string
+            # CRITICAL FIX: Convert the string dates to actual datetime objects, sort them calendar-wise,
+            # and turn them back into strings so they match row['Show Date'] perfectly.
+            all_my_dates = sorted(
+                list(raw_dates),
+                key=lambda d: pd.to_datetime(d, errors='coerce')
+            )
+
+            # If the patron has tickets for multiple nights, calculate their true timeline string
             if len(all_my_dates) > 1:
                 try:
                     current_index = all_my_dates.index(row['Show Date']) + 1
