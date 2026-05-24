@@ -45,14 +45,9 @@ def get_spreadsheet_transactions(_conn):
             except:
                 formatted_date = datetime.today().strftime('%m-%d-%Y')
 
-            # --- ALIGNED COLUMN EXTRACTIONS FOR THE 12-COLUMN SCHEMA ---
-            # Fallback chains check lower/upper case options to protect manual sheet rows
+            # Aligned column extractions for the 12-column ledger
             item_id_val = row.get('item_id', row.get('Item ID', row.get('Show Code', 'N/A')))
-
-            # If the cell still pulled the long transaction ID instead of the show code,
-            # we pull specifically from the 9th column layout key position
             if len(row) >= 9 and (str(item_id_val).startswith('O-') or str(item_id_val).startswith('TXN')):
-                # Safe positional read fallback if headers are named uniquely in the sheet
                 item_id_val = row.iloc[8]
 
             standardized_rows.append({
@@ -248,13 +243,30 @@ if not df_combined.empty:
         if filter_date != "All":
             display_df = display_df[display_df['Show Date'] == filter_date]
 
+        # First group the rows to aggregate clean ticket sums per person per date
         grouped_df = display_df.groupby(['Last Name', 'name', 'Show Date'], as_index=False)['quantity'].sum()
 
+        # --- RESTORED MULTI-NIGHT BRACKET TRACKING ---
+        # 1. Map out which dates each individual person is attending across the whole dashboard scope
+        person_dates_map = display_df.groupby('name')['Show Date'].unique().to_dict()
+
         def format_purchaser_label(row):
-            return f"{row['name']} [Tickets: {int(row['quantity'])}]"
+            p_name = row['name']
+            all_my_dates = sorted(list(person_dates_map.get(p_name, [])))
+
+            # If the patron has tickets for multiple nights, calculate their timeline string
+            if len(all_my_dates) > 1:
+                try:
+                    current_index = all_my_dates.index(row['Show Date']) + 1
+                    return f"{p_name} [Night {current_index}/{len(all_my_dates)}]"
+                except ValueError:
+                    return p_name
+            # If they are just attending a single evening, display their plain unbracketed name
+            return p_name
 
         grouped_df['Custom Label'] = grouped_df.apply(format_purchaser_label, axis=1)
 
+        # Build pivot table breakout tracking matrix
         manifest = grouped_df.pivot_table(
             index=['Last Name', 'Custom Label', 'Show Date'],
             columns='Show Date',
@@ -292,32 +304,4 @@ if not df_combined.empty:
             manifest[col] = (
                 manifest[col]
                 .fillna(0)
-                .astype(float)
-                .astype(int)
-                .astype(str)
-                .replace('0', '-')
-            )
-
-        st.info("Check boxes to mark arrivals and click Save.")
-
-        config = {
-            "Checked In": st.column_config.CheckboxColumn("Arrived", width="small"),
-            "Purchaser Name": st.column_config.Column("Purchaser Name", width=280, disabled=True)
-        }
-        for col in date_cols:
-            config[col] = st.column_config.Column(col, width=120, alignment="center", disabled=True)
-
-        edited_df = st.data_editor(manifest, column_config=config, hide_index=True, key="manifest_editor")
-
-        if st.button("Save Changes to Google Sheet"):
-            with st.spinner("Updating records..."):
-                checkin_list = edited_df[(edited_df['Checked In'] == True) & (edited_df['Purchaser Name'] != "TOTAL TICKETS SOLD")][['Purchaser Name']]
-                checkin_list.columns = ['Name']
-                checkin_list['Status'] = 'Checked In'
-
-                conn.update(worksheet="CheckIns", data=checkin_list)
-                st.cache_data.clear()
-                st.success("Check-ins synced successfully!")
-                st.rerun()
-else:
-    st.warning(f"No transactions found matching the prefix '{ticket_prefix}' in this timeline window.")
+                .astype(float
