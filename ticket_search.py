@@ -202,6 +202,15 @@ if is_past_run:
 else:
     df_combined = df_spreadsheet
 
+# --- TEMPORARY DIAGNOSTIC AUDIT ---
+st.sidebar.markdown("### Jarred Spellman Data Audit")
+if not df_combined.empty:
+    jarred_audit = df_combined[df_combined['name'].str.lower().str.contains('spellman')]
+    if not jarred_audit.empty:
+        st.sidebar.dataframe(jarred_audit[['date', 'item id', 'quantity', 'gross']], hide_index=True)
+    else:
+        st.sidebar.write("Jarred not found in active filtered data.")
+
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
     df_combined = df_combined[
