@@ -29,43 +29,53 @@ def get_access_token():
 @st.cache_data(ttl=10)
 def get_spreadsheet_transactions(_conn):
     try:
+        # Read the raw sheet data
         df = _conn.read(worksheet="TransactionData")
-        if df.empty:
+        if df is None or df.empty:
             return pd.DataFrame()
 
         standardized_rows = []
         for _, row in df.iterrows():
-            checkout_val = row.get('raw_checkout_val', row.get('show_date', ''))
+            # Lowercase and strip keys to handle variance
+            row_dict = {str(k).strip().lower(): v for k, v in row.items()}
 
-            # Smart Date Sanitizer: Converts manual sheet inputs gracefully to %m-%d-%Y
-            raw_sheet_date = str(row.get('date', ''))
+            # Extract raw checkout value / show date
+            show_date_raw = str(row_dict.get('raw_checkout_val', row_dict.get('show_date', row_dict.get('show date', '')))).strip()
+            item_name_val = str(row_dict.get('item_name', row_dict.get('item name', 'Tickets'))).strip()
+
+            # --- 12-COLUMN LEDGER ALIGNMENT FIXES ---
+            # Smart Item ID/Transaction ID finder
+            item_id_val = row_dict.get('item_id', row_dict.get('item id', row_dict.get('transaction_id', row_dict.get('transaction id', 'N/A'))))
+            if len(row) >= 9 and (str(item_id_val).startswith('O-') or str(item_id_val).startswith('TXN')):
+                item_id_val = row.iloc[8] # Fallback to index position if shifted
+
+            gross_val = str(row_dict.get('gross', row_dict.get('amount', '0.00'))).strip()
+            fee_val = str(row_dict.get('fee', '0.00')).strip()
+            net_val = str(row_dict.get('net', row_dict.get('amount', '0.00'))).strip()
+            raw_sheet_date = str(row_dict.get('date', ''))
+
             try:
                 parsed_dt = pd.to_datetime(raw_sheet_date)
                 formatted_date = parsed_dt.strftime('%m-%d-%Y')
             except:
                 formatted_date = datetime.today().strftime('%m-%d-%Y')
 
-            # Aligned column extractions for the 12-column ledger
-            item_id_val = row.get('item_id', row.get('Item ID', row.get('Show Code', 'N/A')))
-            if len(row) >= 9 and (str(item_id_val).startswith('O-') or str(item_id_val).startswith('TXN')):
-                item_id_val = row.iloc[8]
-
             standardized_rows.append({
                 'item id': str(item_id_val).strip(),
                 'date': formatted_date,
-                'time': str(row.get('time', '00:00:00')),
-                'name': str(row.get('name', '')).strip(),
-                'email address': str(row.get('email', '')),
-                'gross': str(row.get('gross', row.get('amount', '0.00'))),
-                'fee': str(row.get('fee', '0.00')),
-                'net': str(row.get('net', row.get('amount', '0.00'))),
-                'item_name': str(row.get('item_name', 'Tickets')),
-                'raw_checkout_val': str(checkout_val),
-                'quantity': int(row.get('quantity', 1)) if pd.notna(row.get('quantity')) else 1,
+                'time': str(row_dict.get('time', '00:00:00')),
+                'name': str(row_dict.get('name', '')).strip(),
+                'email address': str(row_dict.get('email', 'N/A')),
+                'gross': gross_val,
+                'fee': fee_val,
+                'net': net_val,
+                'item_name': item_name_val,
+                'raw_checkout_val': show_date_raw,
+                'quantity': int(row_dict.get('quantity', 1)) if pd.notna(row_dict.get('quantity')) else 1,
             })
         return pd.DataFrame(standardized_rows)
     except Exception as e:
-        st.sidebar.error(f"Spreadsheet parsing debug notice: {e}")
+        st.sidebar.error(f"Spreadsheet parsing layout note: {e}")
         return pd.DataFrame()
 
 # --- HISTORICAL SEARCH ENGINE ---
@@ -81,7 +91,6 @@ def search_transactions_historical(prefix, start_date_str):
     try:
         current_start = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError:
-        st.error(f"Error: Date format must be YYYY-MM-DD (Received: {start_date_str})")
         return []
 
     ultimate_end = datetime.now(timezone.utc)
@@ -151,13 +160,18 @@ def search_transactions_historical(prefix, start_date_str):
 
 @st.cache_data(ttl=0)
 def get_existing_checkins(_conn):
-    try: return _conn.read(worksheet="CheckIns")
-    except: return pd.DataFrame(columns=['Name', 'Status'])
+    try:
+        df = _conn.read(worksheet="CheckIns")
+        return df if df is not None else pd.DataFrame(columns=['Name', 'Status'])
+    except:
+        return pd.DataFrame(columns=['Name', 'Status'])
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Show Configuration")
 ticket_prefix = st.sidebar.text_input("Ticket Prefix (e.g., LEAR)", "LEAR").strip()
-start_date = st.sidebar.date_input("Start Date", datetime.today())
+
+first_of_month = datetime.today().replace(day=1).date()
+start_date = st.sidebar.date_input("Start Date", first_of_month)
 
 sort_col = st.sidebar.selectbox("Sort By", ["Name", "Date", "Ticket ID"])
 sort_order = st.sidebar.radio("Order", ["Ascending", "Descending"])
@@ -166,14 +180,13 @@ st.sidebar.header("Access Control")
 password_input = st.sidebar.text_input("Admin Password (Optional)", type="password")
 is_admin = (password_input == ADMIN_PASSWORD)
 
-if st.button("Refresh Manifest"):
+if st.sidebar.button("Refresh Manifest"):
     st.cache_data.clear()
-    st.success("Manifest completely updated!")
+    st.rerun()
 
-# Pull data sources
+# Run Core Pipeline Engine
 df_spreadsheet = get_spreadsheet_transactions(conn)
 
-# --- SMART HYBRID SWITCH ---
 today_date = datetime.today().date()
 is_past_run = start_date < today_date
 
@@ -189,26 +202,34 @@ if is_past_run:
 else:
     df_combined = df_spreadsheet
 
-# Global filter rule shield
 if not df_combined.empty and ticket_prefix:
     prefix_lower = ticket_prefix.lower()
     df_combined = df_combined[
         df_combined['item_name'].astype(str).str.lower().str.contains(prefix_lower) |
         df_combined['raw_checkout_val'].astype(str).str.lower().str.contains(prefix_lower) |
-        df_combined['item id'].astype(str).str.lower().str.contains(prefix_lower) |
-        (df_combined['item_name'] == '') | (df_combined['item_name'] == 'nan')
+        df_combined['item id'].astype(str).str.lower().str.contains(prefix_lower)
     ]
 
-# --- TRANSFORMATION & SEPARATION GRID ENGINE ---
+# --- TRANSFORMATION & MATRIX GENERATION ENGINE ---
 if not df_combined.empty:
     df = df_combined.copy()
 
     first_item_name = df['item_name'].iloc[0]
-    show_title = str(first_item_name).replace(" Tickets", "").upper()
+    if "Tickets" in str(first_item_name):
+        show_title = str(first_item_name).replace(" Tickets", "").upper()
+    else:
+        show_title = str(ticket_prefix).upper()
 
     def extract_manifest_details(row):
-        raw_show_date = str(row['raw_checkout_val'])
-        show_date = raw_show_date[:raw_show_date.rfind(",")] if "," in raw_show_date else raw_show_date
+        raw_show_date = str(row['raw_checkout_val']).strip()
+        if raw_show_date.startswith("'"):
+            raw_show_date = raw_show_date[1:]
+        parts = [p.strip() for p in raw_show_date.split(',')]
+        if len(parts) >= 2:
+            show_date = f"{parts[0]}, {parts[1]}"
+        else:
+            show_date = raw_show_date
+
         full_name = str(row['name']).strip()
         last_name = full_name.split()[-1] if " " in full_name else full_name
         return pd.Series([show_date, last_name])
@@ -229,9 +250,24 @@ if not df_combined.empty:
 
     df = df.drop(columns=['temp_date'])
 
-    if not is_admin:
-        st.markdown(f'### {show_title}')
+    # Display Show Header
+    st.markdown(f'### {show_title} Dashboard')
 
+    # --- ROUTING VIEW: ADMIN vs FRONT OF HOUSE ---
+    if is_admin:
+        st.subheader("Financial Ledger (Admin Mode)")
+
+        admin_display = df[['date', 'time', 'name', 'email address', 'item id', 'quantity', 'gross', 'fee', 'net']].copy()
+
+        # Safe formatting logic for numeric/currency views
+        admin_display['gross'] = admin_display['gross'].map(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
+        admin_display['fee'] = admin_display['fee'].map(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
+        admin_display['net'] = admin_display['net'].map(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
+
+        st.dataframe(admin_display, hide_index=True, use_container_width=True)
+
+    else:
+        # Standard Door Check-In Interface
         raw_dates = df['Show Date'].unique()
         sorted_dates = sorted(raw_dates, key=lambda x: pd.to_datetime(x, errors='coerce'))
         filter_date = st.selectbox(
@@ -243,51 +279,43 @@ if not df_combined.empty:
         if filter_date != "All":
             display_df = display_df[display_df['Show Date'] == filter_date]
 
-        # First group the rows to aggregate clean ticket sums per person per date
         grouped_df = display_df.groupby(['Last Name', 'name', 'Show Date'], as_index=False)['quantity'].sum()
 
-        # --- RESTORED MULTI-NIGHT BRACKET TRACKING ---
-        # 1. Map out which dates each individual person is attending across the whole dashboard scope
-        person_dates_map = display_df.groupby('name')['Show Date'].unique().to_dict()
+        # Chronologically map global dates per person to ensure correct [Night X/Y] index tracking
+        full_date_map = df.groupby('name')['Show Date'].unique().to_dict()
 
-        def format_purchaser_label(row):
-            p_name = row['name']
-            raw_dates = person_dates_map.get(p_name, [])
+        def format_conditional_labels(row):
+            patron_name = row['name']
+            current_date = row['Show Date']
 
-            # CRITICAL FIX: Convert the string dates to actual datetime objects, sort them calendar-wise,
-            # and turn them back into strings so they match row['Show Date'] perfectly.
-            all_my_dates = sorted(
-                list(raw_dates),
-                key=lambda d: pd.to_datetime(d, errors='coerce')
-            )
+            all_patron_nights = list(full_date_map.get(patron_name, []))
+            all_patron_nights.sort(key=lambda x: pd.to_datetime(x, errors='coerce'))
 
-            # If the patron has tickets for multiple nights, calculate their true timeline string
-            if len(all_my_dates) > 1:
-                try:
-                    current_index = all_my_dates.index(row['Show Date']) + 1
-                    return f"{p_name} [Night {current_index}/{len(all_my_dates)}]"
-                except ValueError:
-                    return p_name
-            # If they are just attending a single evening, display their plain unbracketed name
-            return p_name
+            total_nights_attended = len(all_patron_nights)
 
-        grouped_df['Custom Label'] = grouped_df.apply(format_purchaser_label, axis=1)
+            if total_nights_attended <= 1:
+                return patron_name
+            else:
+                night_index = all_patron_nights.index(current_date) + 1
+                return f"{patron_name} [Night {night_index}/{total_nights_attended}]"
 
-        # Build pivot table breakout tracking matrix
+        grouped_df['Custom Label'] = grouped_df.apply(format_conditional_labels, axis=1)
+        grouped_df['Parsed Performance Date'] = pd.to_datetime(grouped_df['Show Date'], errors='coerce')
+
+        # Pivot built utilizing the correct historical chronological layout anchors
         manifest = grouped_df.pivot_table(
-            index=['Last Name', 'Custom Label', 'Show Date'],
+            index=['Last Name', 'name', 'Custom Label', 'Parsed Performance Date', 'Show Date'],
             columns='Show Date',
             values='quantity',
             aggfunc='sum'
         ).reset_index()
 
-        manifest = manifest.sort_values(by=['Last Name', 'Show Date']).rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'Show Date'])
+        # Sort values directly by calendar date timeline to keep Nights 1, 2, 3, 4 properly sequenced
+        manifest = manifest.sort_values(by=['Last Name', 'name', 'Parsed Performance Date'])
+        manifest = manifest.rename(columns={'Custom Label': 'Purchaser Name'}).drop(columns=['Last Name', 'name', 'Parsed Performance Date', 'Show Date'])
+
         date_cols = [c for c in manifest.columns if c != 'Purchaser Name']
-
-        # --- CRITICAL LAYOUT SORT FIX ---
-        # Force the column headers to sort by actual calendar order instead of string characters
         date_cols.sort(key=lambda x: pd.to_datetime(x, errors='coerce'))
-
         manifest = manifest[['Purchaser Name'] + date_cols]
 
         try:
