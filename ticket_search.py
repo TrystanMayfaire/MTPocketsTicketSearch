@@ -40,27 +40,37 @@ def get_spreadsheet_transactions(_conn):
             # Smart Date Sanitizer: Converts manual sheet inputs gracefully to %m-%d-%Y
             raw_sheet_date = str(row.get('date', ''))
             try:
-                # Attempts to parse whatever format you typed manually (slashes, text, dashes)
                 parsed_dt = pd.to_datetime(raw_sheet_date)
                 formatted_date = parsed_dt.strftime('%m-%d-%Y')
             except:
                 formatted_date = datetime.today().strftime('%m-%d-%Y')
 
+            # --- ALIGNED COLUMN EXTRACTIONS FOR THE 12-COLUMN SCHEMA ---
+            # Fallback chains check lower/upper case options to protect manual sheet rows
+            item_id_val = row.get('item_id', row.get('Item ID', row.get('Show Code', 'N/A')))
+
+            # If the cell still pulled the long transaction ID instead of the show code,
+            # we pull specifically from the 9th column layout key position
+            if len(row) >= 9 and (str(item_id_val).startswith('O-') or str(item_id_val).startswith('TXN')):
+                # Safe positional read fallback if headers are named uniquely in the sheet
+                item_id_val = row.iloc[8]
+
             standardized_rows.append({
-                'item id': str(row.get('item_id', row.get('transaction_id', 'N/A'))),
+                'item id': str(item_id_val).strip(),
                 'date': formatted_date,
                 'time': str(row.get('time', '00:00:00')),
                 'name': str(row.get('name', '')).strip(),
                 'email address': str(row.get('email', '')),
-                'gross': str(row.get('amount', '0.00')),
-                'fee': '0.00',
-                'net': str(row.get('amount', '0.00')),
+                'gross': str(row.get('gross', row.get('amount', '0.00'))),
+                'fee': str(row.get('fee', '0.00')),
+                'net': str(row.get('net', row.get('amount', '0.00'))),
                 'item_name': str(row.get('item_name', 'Tickets')),
                 'raw_checkout_val': str(checkout_val),
                 'quantity': int(row.get('quantity', 1)) if pd.notna(row.get('quantity')) else 1,
             })
         return pd.DataFrame(standardized_rows)
-    except:
+    except Exception as e:
+        st.sidebar.error(f"Spreadsheet parsing debug notice: {e}")
         return pd.DataFrame()
 
 # --- HISTORICAL SEARCH ENGINE ---
@@ -238,18 +248,13 @@ if not df_combined.empty:
         if filter_date != "All":
             display_df = display_df[display_df['Show Date'] == filter_date]
 
-        # --- THE SEPARATION MECHANISM ---
-        # First group the rows to get clean sums per person per date
         grouped_df = display_df.groupby(['Last Name', 'name', 'Show Date'], as_index=False)['quantity'].sum()
 
-        # Rewrite the displayed name string to include your custom ticket indicator brackets
-        # e.g., "Mary Spellman [Tickets: 2]"
         def format_purchaser_label(row):
             return f"{row['name']} [Tickets: {int(row['quantity'])}]"
 
         grouped_df['Custom Label'] = grouped_df.apply(format_purchaser_label, axis=1)
 
-        # By including 'Show Date' inside our index list, Pandas forces Mary to break out onto completely separate rows!
         manifest = grouped_df.pivot_table(
             index=['Last Name', 'Custom Label', 'Show Date'],
             columns='Show Date',
