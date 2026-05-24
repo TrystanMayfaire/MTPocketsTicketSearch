@@ -56,14 +56,14 @@ def get_spreadsheet_transactions(_conn):
                 item_id_val = row.iloc[8]
 
             standardized_rows.append({
-                'item id': str(item_id_val).strip(),
+                'item id': str(row.get('item_id', row.get('transaction_id', 'N/A'))),
                 'date': formatted_date,
                 'time': str(row.get('time', '00:00:00')),
                 'name': str(row.get('name', '')).strip(),
                 'email address': str(row.get('email', '')),
-                'gross': str(row.get('gross', row.get('amount', '0.00'))),
-                'fee': str(row.get('fee', '0.00')),
-                'net': str(row.get('net', row.get('amount', '0.00'))),
+                'gross': str(row.get('amount', '0.00')),
+                'fee': '0.00',
+                'net': str(row.get('amount', '0.00')),
                 'item_name': str(row.get('item_name', 'Tickets')),
                 'raw_checkout_val': str(checkout_val),
                 'quantity': int(row.get('quantity', 1)) if pd.notna(row.get('quantity')) else 1,
@@ -248,13 +248,18 @@ if not df_combined.empty:
         if filter_date != "All":
             display_df = display_df[display_df['Show Date'] == filter_date]
 
+        # --- THE SEPARATION MECHANISM ---
+        # First group the rows to get clean sums per person per date
         grouped_df = display_df.groupby(['Last Name', 'name', 'Show Date'], as_index=False)['quantity'].sum()
 
+        # Rewrite the displayed name string to include your custom ticket indicator brackets
+        # e.g., "Mary Spellman [Tickets: 2]"
         def format_purchaser_label(row):
             return f"{row['name']} [Tickets: {int(row['quantity'])}]"
 
         grouped_df['Custom Label'] = grouped_df.apply(format_purchaser_label, axis=1)
 
+        # By including 'Show Date' inside our index list, Pandas forces Mary to break out onto completely separate rows!
         manifest = grouped_df.pivot_table(
             index=['Last Name', 'Custom Label', 'Show Date'],
             columns='Show Date',
