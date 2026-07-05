@@ -81,7 +81,7 @@ def get_spreadsheet_transactions(_conn):
 
 # --- HISTORICAL SEARCH ENGINE ---
 @st.cache_data(ttl=600)
-def search_transactions_historical(prefix, start_date_str):
+def search_transactions_historical(prefix, start_date_str, end_date_str=None):
     token = get_access_token()
     if not token:
         return []
@@ -94,7 +94,10 @@ def search_transactions_historical(prefix, start_date_str):
     except ValueError:
         return []
 
-    ultimate_end = datetime.strptime("2026-05-22 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    if end_date_str:
+        ultimate_end = datetime.strptime(end_date_str + " 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    else:
+        ultimate_end = datetime.strptime("2026-05-22 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     all_rows = []
 
     while current_start < ultimate_end:
@@ -192,8 +195,15 @@ today_date = datetime.today().date()
 is_past_run = start_date < today_date
 
 if is_past_run:
-    historical_list = search_transactions_historical(ticket_prefix, start_date.strftime("%Y-%m-%d"))
+    if df_spreadsheet.empty:
+        historical_list = search_transactions_historical(ticket_prefix,
+                                                         start_date.strftime("%Y-%m-%d"),
+                                                         end_date_str=today_date.strftime("%Y-%m-%d"))
+    else:
+        historical_list = search_transactions_historical(ticket_prefix,
+                                                         start_date.strftime("%Y-%m-%d"))
     df_historical = pd.DataFrame(historical_list)
+
     if not df_spreadsheet.empty and not df_historical.empty:
         df_combined = pd.concat([df_spreadsheet, df_historical], ignore_index=True)
     elif not df_historical.empty:
