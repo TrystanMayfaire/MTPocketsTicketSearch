@@ -11,6 +11,7 @@ CLIENT_ID = st.secrets['PAYPAL_CLIENT_ID']
 CLIENT_SECRET = st.secrets['PAYPAL_CLIENT_SECRET']
 ADMIN_PASSWORD = st.secrets.get('ADMIN_PASSWORD', 'mtpockets123')
 PAYPAL_MODE = st.secrets.get('PAYPAL_MODE', 'live')
+DEFAULT_PREFIX = "2026TMPF"
 
 # Initialize the Google Sheets connection
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -168,7 +169,7 @@ def get_existing_checkins(_conn):
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Show Configuration")
-ticket_prefix = st.sidebar.text_input("Ticket Prefix (e.g., LEAR)", "2026TMPF").strip()
+ticket_prefix = st.sidebar.text_input("Ticket Prefix (e.g., LEAR)", DEFAULT_PREFIX).strip()
 
 first_of_month = datetime.today().replace(day=1).date()
 start_date = st.sidebar.date_input("Start Date", first_of_month)
