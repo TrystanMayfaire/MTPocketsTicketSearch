@@ -168,7 +168,7 @@ def get_existing_checkins(_conn):
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("Show Configuration")
-ticket_prefix = st.sidebar.text_input("Ticket Prefix (e.g., LEAR)", "LEAR").strip()
+ticket_prefix = st.sidebar.text_input("Ticket Prefix (e.g., LEAR)", "2026TMPF").strip()
 
 first_of_month = datetime.today().replace(day=1).date()
 start_date = st.sidebar.date_input("Start Date", first_of_month)
